@@ -69,9 +69,9 @@ run_admin.bat
 
 Access the UI in your web browser at `http://127.0.0.1:5000`.
 
-### Compiling to a Single Executable
-You can bundle Python, all code dependencies, dynamic scanners, and frontend assets into a single executable using the custom build script:
+### Compiling to a Stand-alone Folder
+You can bundle Python, all code dependencies, dynamic scanners, and frontend assets into a stand-alone folder using the custom build script:
 ```bash
 python build.py
 ```
-This produces `dist/NetAudit.exe`. The build script is configured to preserve the `dist` folder, meaning you can store Npcap or Nmap installer prerequisites alongside the compiled binary for easy distribution.
+This produces the folder `dist/NetAudit/` containing the executable `NetAudit.exe` alongside its linked library dependencies (which bypasses Windows Smart App Control blocking). The build script is configured to preserve other files in the `dist` folder, meaning you can store Npcap or Nmap installer prerequisites alongside the compiled directory for easy distribution.

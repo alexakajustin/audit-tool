@@ -77,6 +77,7 @@ class MetricsManager:
 
         # Capture end snapshot
         stats = sniffer_service.get_stats()
+        self.raw_stats = stats
         end_packet_count = stats.get("total_packets", 0)
         end_hosts = set(stats.get("unique_hosts", []))
         
@@ -130,11 +131,18 @@ class MetricsManager:
             "pdf_filename": os.path.basename(self.pdf_report_path) if self.pdf_report_path else ""
         }
 
+    def _format_bytes(self, num: float) -> str:
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if num < 1024.0:
+                return f"{num:.1f} {unit}"
+            num /= 1024.0
+        return f"{num:.1f} TB"
+
     def _generate_pdf_report(self):
         """Generates the elegant, minimalist PDF security report using fpdf2."""
         pdf = FPDF(orientation="P", unit="mm", format="A4")
-        pdf.add_page()
         pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.add_page()
         
         # Color definitions
         c_dark_navy = (21, 27, 43)
@@ -149,7 +157,7 @@ class MetricsManager:
         pdf.set_font("helvetica", "", 10)
         pdf.set_text_color(*c_muted)
         current_date = time.strftime("%Y-%m-%d %H:%M:%S")
-        pdf.cell(0, 5, f"Automated Security Posture Report  |  Generated: {current_date}", ln=True, align="L")
+        pdf.cell(0, 5, f"Automated Security & Network Health Audit  |  Generated: {current_date}", ln=True, align="L")
         
         # Thin divider line
         pdf.set_draw_color(220, 225, 235)
@@ -159,6 +167,9 @@ class MetricsManager:
         
         # Move Y down a bit instead of drawing the scorecard box
         pdf.set_xy(10, 35)
+
+        raw_stats = getattr(self, "raw_stats", {})
+        pps = raw_stats.get("packets_per_second", 0)
 
         # ── Network Telemetry Summary ──
         pdf.set_font("helvetica", "B", 12)
@@ -182,19 +193,135 @@ class MetricsManager:
         pdf.cell(45, 7, " Duration", border="B")
         pdf.cell(50, 7, f" {self.duration:.1f} seconds", border="B")
         pdf.cell(45, 7, " Packets Analyzed", border="B")
-        pdf.cell(50, 7, f" {self.packets_gathered}", border="B", ln=True)
+        pdf.cell(50, 7, f" {self.packets_gathered} packets", border="B", ln=True)
         
         # Row 2
         pdf.cell(45, 7, " Unique Hosts Communicating", border="B")
         pdf.cell(50, 7, f" {len(self.unique_hosts_seen)} hosts", border="B")
+        pdf.cell(45, 7, " Avg Traffic Rate", border="B")
+        pdf.cell(50, 7, f" {pps:.2f} Packets/Sec", border="B", ln=True)
+
+        # Row 3
+        pdf.cell(45, 7, " Sniffer Active Interface", border="B")
+        pdf.cell(50, 7, f" {raw_stats.get('local_ip', 'Dynamic')}", border="B")
         pdf.cell(45, 7, " Security Alerts Triggered", border="B")
         pdf.cell(50, 7, f" {len(self.new_alerts)} alerts", border="B", ln=True)
         pdf.ln(8)
 
-        # ── Detailed Findings ──
+        # ── Protocol Distribution ──
+        protocols = raw_stats.get("protocols", {})
+        if protocols:
+            pdf.set_font("helvetica", "B", 12)
+            pdf.set_text_color(*c_dark_navy)
+            pdf.cell(0, 8, "Protocol Distribution Summary", ln=True)
+            pdf.ln(2)
+            
+            with pdf.table(borders_layout="HORIZONTAL_LINES", text_align="LEFT") as table:
+                pdf.set_font("helvetica", "B", 9)
+                row = table.row()
+                row.cell("Protocol Layer")
+                row.cell("Packet Count")
+                row.cell("Traffic Share")
+                
+                pdf.set_font("helvetica", "", 9)
+                total_pkts = sum(protocols.values()) or 1
+                for proto, count in sorted(protocols.items(), key=lambda x: x[1], reverse=True)[:10]:
+                    share = (count / total_pkts) * 100
+                    row = table.row()
+                    row.cell(str(proto))
+                    row.cell(f"{count:,}")
+                    row.cell(f"{share:.1f}%")
+            pdf.ln(8)
+
+        # ── Top Network Talkers ──
+        top_talkers = raw_stats.get("top_talkers", [])
+        if top_talkers:
+            pdf.set_font("helvetica", "B", 12)
+            pdf.set_text_color(*c_dark_navy)
+            pdf.cell(0, 8, "Top Bandwidth Consumers (Hosts)", ln=True)
+            pdf.ln(2)
+            
+            with pdf.table(borders_layout="HORIZONTAL_LINES", text_align="LEFT") as table:
+                pdf.set_font("helvetica", "B", 9)
+                row = table.row()
+                row.cell("Host IP Address")
+                row.cell("Data Transferred")
+                
+                pdf.set_font("helvetica", "", 9)
+                for ip, bytes_val in top_talkers[:10]:
+                    row = table.row()
+                    row.cell(str(ip))
+                    row.cell(self._format_bytes(bytes_val))
+            pdf.ln(8)
+
+        # ── Top DNS Queries ──
+        dns_queries = raw_stats.get("dns_queries", [])
+        if dns_queries:
+            pdf.set_font("helvetica", "B", 12)
+            pdf.set_text_color(*c_dark_navy)
+            pdf.cell(0, 8, "Top DNS Resolution Queries", ln=True)
+            pdf.ln(2)
+            
+            with pdf.table(borders_layout="HORIZONTAL_LINES", text_align="LEFT") as table:
+                pdf.set_font("helvetica", "B", 9)
+                row = table.row()
+                row.cell("Target Domain Name")
+                row.cell("Request Count")
+                
+                pdf.set_font("helvetica", "", 9)
+                for domain, count in dns_queries[:10]:
+                    row = table.row()
+                    row.cell(str(domain))
+                    row.cell(f"{count} queries")
+            pdf.ln(8)
+
+        # ── Most Visited Websites ──
+        http_hosts = raw_stats.get("http_hosts", [])
+        if http_hosts:
+            pdf.set_font("helvetica", "B", 12)
+            pdf.set_text_color(*c_dark_navy)
+            pdf.cell(0, 8, "Most Visited Websites / Hostnames (HTTP)", ln=True)
+            pdf.ln(2)
+            
+            with pdf.table(borders_layout="HORIZONTAL_LINES", text_align="LEFT") as table:
+                pdf.set_font("helvetica", "B", 9)
+                row = table.row()
+                row.cell("Website / Hostname")
+                
+                pdf.set_font("helvetica", "", 9)
+                for host in http_hosts[:15]:
+                    row = table.row()
+                    row.cell(str(host))
+            pdf.ln(8)
+
+        # ── Discovered Services ──
+        services = raw_stats.get("services", {})
+        if services:
+            # Filter services map for entries that actually have protocols
+            svc_items = [item for item in services.items() if item[1]]
+            if svc_items:
+                pdf.set_font("helvetica", "B", 12)
+                pdf.set_text_color(*c_dark_navy)
+                pdf.cell(0, 8, "Detected Network Services", ln=True)
+                pdf.ln(2)
+                
+                with pdf.table(borders_layout="HORIZONTAL_LINES", text_align="LEFT") as table:
+                    pdf.set_font("helvetica", "B", 9)
+                    row = table.row()
+                    row.cell("Host IP Address")
+                    row.cell("Detected Services / Broadcast Ports")
+                    
+                    pdf.set_font("helvetica", "", 9)
+                    for ip, svcs in sorted(svc_items, key=lambda x: len(x[1]), reverse=True)[:10]:
+                        row = table.row()
+                        row.cell(str(ip))
+                        row.cell(", ".join(str(s) for s in svcs))
+                pdf.ln(8)
+
+        # ── Detailed Security Findings ──
         pdf.set_font("helvetica", "B", 12)
         pdf.set_text_color(*c_dark_navy)
-        pdf.cell(0, 8, "Security Findings", ln=True)
+        pdf.cell(0, 8, "Security Findings & Anomalies", ln=True)
         pdf.ln(2)
         
         if not self.new_alerts:

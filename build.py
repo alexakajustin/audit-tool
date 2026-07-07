@@ -19,9 +19,9 @@ def build():
     if os.path.exists("build"):
         shutil.rmtree("build")
         
-    exe_path = os.path.join("dist", "NetAudit.exe")
-    if os.path.exists(exe_path):
-        os.remove(exe_path)
+    exe_dir = os.path.join("dist", "NetAudit")
+    if os.path.exists(exe_dir):
+        shutil.rmtree(exe_dir)
         
     if os.path.exists("NetAudit.spec"):
         os.remove("NetAudit.spec")
@@ -36,7 +36,7 @@ def build():
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--name", "NetAudit",
-        "--onefile",
+        "--onedir",
         "--clean",
         "--add-data", f"templates{os.pathsep}templates",
         "--add-data", f"static{os.pathsep}static",
@@ -70,7 +70,7 @@ def build():
     
     if result.returncode == 0:
         print("\nBuild successful!")
-        print("Executable is located in the 'dist' directory: dist/NetAudit.exe")
+        print("Executable folder is located in the 'dist' directory: dist/NetAudit/NetAudit.exe")
     else:
         print("\nBuild failed!")
         sys.exit(1)
