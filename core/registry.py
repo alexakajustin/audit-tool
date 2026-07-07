@@ -37,7 +37,19 @@ class ScannerRegistry:
         except ImportError:
             return
 
-        for importer, module_name, is_pkg in pkgutil.iter_modules(package.__path__):
+        # Handle PyInstaller environment pathing for module loading
+        import sys
+        import os
+        
+        # When bundled with PyInstaller, __path__ might not work as expected
+        # with pkgutil, but we told PyInstaller to include the scanners folder
+        path = package.__path__
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            scanner_dir = os.path.join(sys._MEIPASS, "scanners")
+            if os.path.exists(scanner_dir):
+                path = [scanner_dir]
+
+        for importer, module_name, is_pkg in pkgutil.iter_modules(path):
             try:
                 module = importlib.import_module(f"{package_name}.{module_name}")
 

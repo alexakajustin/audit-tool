@@ -43,11 +43,23 @@ def create_app() -> tuple[Flask, SocketIO]:
                 except Exception:
                     pass
 
+    # Handle PyInstaller _MEIPASS for bundled templates and static files
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # Running as a bundled executable
+        base_dir = sys._MEIPASS
+        template_dir = os.path.join(base_dir, "templates")
+        static_dir = os.path.join(base_dir, "static")
+    else:
+        # Running from source
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        template_dir = os.path.join(base_dir, "templates")
+        static_dir = os.path.join(base_dir, "static")
+
     # Create Flask app
     app = Flask(
         __name__,
-        static_folder="static",
-        template_folder="templates",
+        static_folder=static_dir,
+        template_folder=template_dir,
     )
     app.config["SECRET_KEY"] = Config.SECRET_KEY
 
