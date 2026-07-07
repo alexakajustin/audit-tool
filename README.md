@@ -21,7 +21,14 @@ The application includes a plugin-based architecture for active security checks:
 ### Security Telemetry & Metrics Reporting
 A background session-based telemetry gathering engine aggregates network statistics, packet counts, active hosts, and security threats over a user-defined window.
 * **Master Service Control**: Clicking "Start Gathering Metrics" auto-detects the best network interface and starts both passive discovery and the packet sniffer if they are inactive.
-* **Telemetry PDF Report**: Once stopped, NetAudit generates a structured PDF containing a network summary, raw telemetry values, structured security findings (such as ARP Spoofing or Rogue DHCP detections), and mitigation recommendations.
+* **Telemetry PDF Report**: Once stopped, NetAudit generates a structured PDF containing a network summary, raw telemetry values, and extensive health metrics:
+  * **Traffic Rate & Statistics**: Total packets captured, duration, active interface IP, and Average Traffic Rate in Packets per Second (PPS).
+  * **Protocol Distribution**: Table detailing packet counts and traffic share percentage for active network protocols (TCP, UDP, ARP, DNS, etc.).
+  * **Top Bandwidth Consumers**: Detailed breakdown of hosts transferring the most data during the session (formatted in B, KB, MB, GB).
+  * **Top DNS Queries**: Summary of target domains queried on the network by count.
+  * **Most Visited Websites**: Table mapping HTTP hostnames/websites requested.
+  * **Detected Network Services**: List of active network assets and the broadcast services or protocols they run.
+  * **Security Findings & Mitigation Recommendations**: Clean table of detected anomalies (like ARP spoofing or rogue DHCP offers) with actionable, industry-standard mitigation advice.
 
 ## Project Structure
 
