@@ -1,0 +1,17 @@
+# PyInstaller / Build outputs
+build/
+dist/*
+!dist/NetAudit.exe
+*.spec
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Local databases & run data
+data/
+*.db
+
+# OS files
+.DS_Store
+Thumbs.db

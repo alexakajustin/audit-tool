@@ -77,4 +77,9 @@ const API = {
 
     // ── Stats ──────────────────────────────────────────────
     getStats()          { return this.get('/api/stats'); },
+
+    // ── Metrics Gathering ──────────────────────────────────
+    startMetrics()      { return this.post('/api/metrics/start'); },
+    stopMetrics()       { return this.post('/api/metrics/stop'); },
+    getMetricsStatus()  { return this.get('/api/metrics/status'); },
 };

@@ -16,9 +16,13 @@ def build():
     os.chdir(project_root)
 
     print("Cleaning previous builds...")
-    for dir_name in ["build", "dist"]:
-        if os.path.exists(dir_name):
-            shutil.rmtree(dir_name)
+    if os.path.exists("build"):
+        shutil.rmtree("build")
+        
+    exe_path = os.path.join("dist", "NetAudit.exe")
+    if os.path.exists(exe_path):
+        os.remove(exe_path)
+        
     if os.path.exists("NetAudit.spec"):
         os.remove("NetAudit.spec")
 

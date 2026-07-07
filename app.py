@@ -14,6 +14,7 @@ from config import Config
 from core.registry import ScannerRegistry
 from core.orchestrator import ScanOrchestrator
 from core.inventory import InventoryManager
+from core.metrics_manager import MetricsManager
 from sniffers.passive_sniffer import PassiveSniffer
 from sniffers.passive_discovery import PassiveDiscovery
 from network.interfaces import get_best_interface
@@ -83,8 +84,11 @@ def create_app() -> tuple[Flask, SocketIO]:
     # 5. Passive Discovery Engine — mines broadcast traffic
     passive_discovery = PassiveDiscovery()
 
+    # 6. Metrics Manager — delta background intelligence
+    metrics_manager = MetricsManager()
+
     # Inject services into the API layer
-    api.init_services(registry, orchestrator, inventory, sniffer, passive_discovery)
+    api.init_services(registry, orchestrator, inventory, sniffer, passive_discovery, metrics_manager)
 
     # ── Register API blueprints ──────────────────────────────
     from api.discovery_routes import discovery_bp
@@ -92,12 +96,14 @@ def create_app() -> tuple[Flask, SocketIO]:
     from api.sniffer_routes import sniffer_bp
     from api.stats_routes import stats_bp
     from api.passive_discovery_routes import passive_discovery_bp
+    from api.metrics_routes import metrics_bp
 
     app.register_blueprint(discovery_bp)
     app.register_blueprint(inventory_bp)
     app.register_blueprint(sniffer_bp)
     app.register_blueprint(stats_bp)
     app.register_blueprint(passive_discovery_bp)
+    app.register_blueprint(metrics_bp)
 
     # ── Root route — serves the SPA ──────────────────────────
     @app.route("/")

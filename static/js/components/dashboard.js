@@ -75,6 +75,40 @@ const DashboardPage = {
                     </div>
                 </div>
 
+                <!-- Security Metrics Gathering Card -->
+                <div class="card" style="margin-top:16px">
+                    <div class="card-header">
+                        <span class="card-title" style="display:flex;align-items:center;gap:8px">
+                            <span class="pd-live-dot" id="metrics-dot" style="background:var(--text-muted)"></span>
+                            Security Metrics Assessment
+                        </span>
+                        <div style="display:flex;gap:12px;align-items:center">
+                            <span id="metrics-status-text" style="color:var(--text-muted);font-size:0.8rem">IDLE</span>
+                            <button id="btn-metrics-toggle" class="btn btn-success" style="padding: 10px 20px; font-size: 1.05rem; font-weight: bold; box-shadow: 0 0 15px rgba(0,255,136,0.3);" onclick="DashboardPage.toggleMetricsGathering()">
+                                Start Gathering Metrics
+                            </button>
+                            <a id="btn-metrics-download" class="btn btn-primary" href="/api/metrics/download" target="_blank" style="display:none; align-items:center; gap:8px; text-decoration:none; padding: 10px 20px; font-size: 1.05rem; font-weight: bold; box-shadow: 0 0 15px rgba(0,240,255,0.3);">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                                Download PDF Report
+                            </a>
+                        </div>
+                    </div>
+                    <div id="metrics-summary-view" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:12px;margin-top:8px">
+                        <div class="pd-stat">
+                            <div class="pd-stat-value" id="metrics-packets" style="color:var(--cyan)">0</div>
+                            <div class="pd-stat-label">Packets Captured</div>
+                        </div>
+                        <div class="pd-stat">
+                            <div class="pd-stat-value" id="metrics-hosts" style="color:var(--green)">0</div>
+                            <div class="pd-stat-label">Unique Hosts Seen</div>
+                        </div>
+                        <div class="pd-stat">
+                            <div class="pd-stat-value" id="metrics-alerts" style="color:var(--orange)">0</div>
+                            <div class="pd-stat-label">Alerts Triggered</div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Scanner Status -->
                 <div class="card" style="margin-top:16px">
                     <div class="card-header">
@@ -112,6 +146,22 @@ const DashboardPage = {
         }
     },
 
+    async toggleMetricsGathering() {
+        try {
+            const status = await API.getMetricsStatus();
+            if (status.is_gathering) {
+                await API.stopMetrics();
+                App.toast('Metrics gathering stopped. Report generated.', 'success');
+            } else {
+                await API.startMetrics();
+                App.toast('Metrics gathering started in background...', 'success');
+            }
+            await this._loadData();
+        } catch (e) {
+            App.toast('Failed: ' + e.message, 'error');
+        }
+    },
+
     async _loadData() {
         try {
             const stats = await API.getStats();
@@ -125,6 +175,9 @@ const DashboardPage = {
                 const pd = await API.getPassiveDiscoveryStatus();
                 this._updatePassiveDiscovery(pd);
             } catch (e) { /* ignore */ }
+
+            // Update metrics gathering UI
+            await this._updateMetricsUI();
         } catch (e) {
             // Silently retry on next interval
         }
@@ -167,6 +220,45 @@ const DashboardPage = {
                 ).join('');
             }
         }
+    },
+
+    async _updateMetricsUI() {
+        try {
+            const mm = await API.getMetricsStatus();
+            const dot = document.getElementById('metrics-dot');
+            const statusText = document.getElementById('metrics-status-text');
+            const btnToggle = document.getElementById('btn-metrics-toggle');
+            const btnDownload = document.getElementById('btn-metrics-download');
+            
+            const pVal = document.getElementById('metrics-packets');
+            const hVal = document.getElementById('metrics-hosts');
+            const aVal = document.getElementById('metrics-alerts');
+
+            if (dot) {
+                dot.style.background = mm.is_gathering ? 'var(--red)' : 'var(--text-muted)';
+                dot.style.boxShadow = mm.is_gathering ? '0 0 8px var(--red)' : 'none';
+                if (mm.is_gathering) {
+                    dot.classList.add('pulse');
+                } else {
+                    dot.classList.remove('pulse');
+                }
+            }
+            if (statusText) {
+                statusText.textContent = mm.is_gathering ? `GATHERING (${this._formatDuration(mm.duration)})` : 'IDLE';
+            }
+            if (btnToggle) {
+                btnToggle.textContent = mm.is_gathering ? 'Stop Gathering Metrics' : 'Start Gathering Metrics';
+                btnToggle.className = mm.is_gathering ? 'btn btn-danger' : 'btn btn-success';
+                btnToggle.style.boxShadow = mm.is_gathering ? '0 0 15px rgba(255,59,92,0.4)' : '0 0 15px rgba(0,255,136,0.3)';
+            }
+            if (btnDownload) {
+                btnDownload.style.display = mm.pdf_available ? 'inline-flex' : 'none';
+            }
+
+            if (pVal) pVal.textContent = mm.packets_gathered || 0;
+            if (hVal) hVal.textContent = mm.unique_hosts_count || 0;
+            if (aVal) aVal.textContent = mm.alerts_triggered_count || 0;
+        } catch (e) { /* ignore */ }
     },
 
     _updateStats(stats) {
