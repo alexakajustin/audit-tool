@@ -43,6 +43,10 @@ class PassiveSniffer(BaseSniffer):
         self._http_hosts: set[str] = set()                         # HTTP Host headers seen
         self._data_volume: dict[str, int] = {}                     # IP -> total bytes
         self._local_ip: str = ""                                   # The user's own IP (to exclude)
+        self._ip_to_mac: dict[str, str] = {}                       # IP -> MAC mapping for ARP spoofing
+        self._dhcp_servers: set[str] = set()                       # Set of detected DHCP servers
+        self._tcp_syn_scans: dict[str, set[int]] = {}              # IP -> set of destination ports scanned
+        self._alerts_triggered: set[str] = set()                   # Avoid duplicate alerts for the same event
 
     @property
     def name(self) -> str:
@@ -75,6 +79,10 @@ class PassiveSniffer(BaseSniffer):
         self._security_alerts = []
         self._http_hosts = set()
         self._data_volume = {}
+        self._ip_to_mac = {}
+        self._dhcp_servers = set()
+        self._tcp_syn_scans = {}
+        self._alerts_triggered = set()
 
         # Detect local IP for this interface
         self._local_ip = self._detect_local_ip(interface)
@@ -367,6 +375,162 @@ class PassiveSniffer(BaseSniffer):
                         "timestamp": info.timestamp,
                     })
 
+            # ARP Spoofing / Poisoning detection
+            if info.src and info.src_mac and not info.src.startswith("ff") and not info.src.startswith("fe80") and not info.src.startswith("224.") and not info.src.startswith("239.") and info.src != "0.0.0.0" and info.src != "255.255.255.255":
+                src_ip = info.src
+                src_mac = info.src_mac.upper()
+                if src_mac not in ("FF:FF:FF:FF:FF:FF", "00:00:00:00:00:00") and not src_mac.startswith("01:00:5E") and not src_mac.startswith("33:33"):
+                    if src_ip in self._ip_to_mac:
+                        old_mac = self._ip_to_mac[src_ip]
+                        if old_mac != src_mac:
+                            alert_key = f"arp_spoof:{src_ip}"
+                            if alert_key not in self._alerts_triggered:
+                                self._alerts_triggered.add(alert_key)
+                                if len(self._security_alerts) < 200:
+                                    self._security_alerts.append({
+                                        "type": "arp_spoofing",
+                                        "severity": "critical",
+                                        "message": f"Potential ARP Spoofing: IP {src_ip} changed MAC from {old_mac} to {src_mac}",
+                                        "src": src_ip,
+                                        "dst": "Broadcast",
+                                        "timestamp": info.timestamp,
+                                    })
+                    else:
+                        self._ip_to_mac[src_ip] = src_mac
+
+            # Rogue / Multiple DHCP Servers detection
+            if info.protocol == "DHCP" and pkt.haslayer(UDP):
+                udp = pkt[UDP]
+                if udp.sport == 67 and info.src:
+                    server_ip = info.src
+                    server_mac = info.src_mac.upper() if info.src_mac else "Unknown MAC"
+                    if server_ip not in self._dhcp_servers:
+                        self._dhcp_servers.add(server_ip)
+                        if len(self._dhcp_servers) > 1:
+                            alert_key = f"rogue_dhcp:{server_ip}"
+                            if alert_key not in self._alerts_triggered:
+                                self._alerts_triggered.add(alert_key)
+                                first_server = list(self._dhcp_servers)[0]
+                                if len(self._security_alerts) < 200:
+                                    self._security_alerts.append({
+                                        "type": "rogue_dhcp",
+                                        "severity": "critical",
+                                        "message": f"Multiple DHCP Servers: IP {server_ip} ({server_mac}) active beside {first_server}",
+                                        "src": server_ip,
+                                        "dst": "Broadcast",
+                                        "timestamp": info.timestamp,
+                                    })
+
+            # Deprecated/Weak TLS version detection
+            if pkt.haslayer(Raw) and (info.src_port == 443 or info.dst_port == 443):
+                payload = bytes(pkt[Raw].load)
+                if len(payload) >= 11:
+                    # Check if Handshake Record (0x16) and Server Hello (0x02) at offset 5
+                    if payload[0] == 0x16 and payload[5] == 0x02:
+                        version_num = (payload[9] << 8) | payload[10]
+                        version_map = {
+                            0x0300: "SSL 3.0",
+                            0x0301: "TLS 1.0",
+                            0x0302: "TLS 1.1"
+                        }
+                        if version_num in version_map:
+                            version_name = version_map[version_num]
+                            alert_key = f"weak_tls:{info.src}:{version_name}"
+                            if alert_key not in self._alerts_triggered:
+                                self._alerts_triggered.add(alert_key)
+                                if len(self._security_alerts) < 200:
+                                    self._security_alerts.append({
+                                        "type": "weak_tls",
+                                        "severity": "warning",
+                                        "message": f"Weak SSL/TLS protocol ({version_name}) negotiated by server",
+                                        "src": info.src,
+                                        "dst": info.dst,
+                                        "timestamp": info.timestamp,
+                                    })
+
+            # TCP SYN Port Scan detection
+            if pkt.haslayer(TCP):
+                tcp = pkt[TCP]
+                # SYN set, ACK not set
+                is_syn_only = False
+                if hasattr(tcp, "flags"):
+                    if isinstance(tcp.flags, str):
+                        is_syn_only = (tcp.flags == "S")
+                    else:
+                        is_syn_only = (int(tcp.flags) == 2)
+                if is_syn_only:
+                    src_ip = info.src
+                    dst_port = info.dst_port
+                    if src_ip and dst_port:
+                        if src_ip not in self._tcp_syn_scans:
+                            self._tcp_syn_scans[src_ip] = set()
+                        self._tcp_syn_scans[src_ip].add(dst_port)
+                        scanned_count = len(self._tcp_syn_scans[src_ip])
+                        if scanned_count >= 15:
+                            alert_key = f"port_scan:{src_ip}"
+                            if alert_key not in self._alerts_triggered or (scanned_count % 20 == 0):
+                                self._alerts_triggered.add(alert_key)
+                                if len(self._security_alerts) < 200:
+                                    self._security_alerts.append({
+                                        "type": "port_scan",
+                                        "severity": "warning",
+                                        "message": f"Host performing TCP port scan ({scanned_count} unique ports probed)",
+                                        "src": src_ip,
+                                        "dst": "Multiple Ports",
+                                        "timestamp": info.timestamp,
+                                    })
+
+            # Cleartext Email Credentials
+            if pkt.haslayer(Raw) and info.dst_port in (25, 110, 143):
+                try:
+                    raw_text = bytes(pkt[Raw].load).decode("utf-8", errors="ignore").strip()
+                    raw_upper = raw_text.upper()
+                    is_leak = False
+                    msg = ""
+                    if info.dst_port == 110 and (raw_upper.startswith("USER ") or raw_upper.startswith("PASS ")):
+                        is_leak = True
+                        msg = f"POP3 credentials sent in cleartext: {raw_text[:40]}"
+                    elif info.dst_port == 143 and " LOGIN " in raw_upper:
+                        is_leak = True
+                        msg = f"IMAP credentials sent in cleartext: {raw_text[:40]}"
+                    elif info.dst_port == 25 and (raw_upper.startswith("AUTH PLAIN") or raw_upper.startswith("AUTH LOGIN")):
+                        is_leak = True
+                        msg = f"SMTP authentication initiated in cleartext"
+                    if is_leak:
+                        alert_key = f"cleartext_email_cred:{info.src}:{info.dst_port}"
+                        if alert_key not in self._alerts_triggered:
+                            self._alerts_triggered.add(alert_key)
+                            if len(self._security_alerts) < 200:
+                                self._security_alerts.append({
+                                    "type": "cleartext_credentials",
+                                    "severity": "critical",
+                                    "message": msg,
+                                    "src": info.src,
+                                    "dst": info.dst,
+                                    "timestamp": info.timestamp,
+                                })
+                except Exception:
+                    pass
+
+            # Direct DNS Request bypassing local resolver
+            if info.protocol == "DNS" and pkt.haslayer(UDP):
+                udp = pkt[UDP]
+                if udp.dport == 53 and info.dst:
+                    public_dns = {"8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1", "9.9.9.9", "208.67.222.222", "208.67.220.220"}
+                    if info.dst in public_dns:
+                        alert_key = f"public_dns:{info.src}:{info.dst}"
+                        if alert_key not in self._alerts_triggered:
+                            self._alerts_triggered.add(alert_key)
+                            if len(self._security_alerts) < 200:
+                                self._security_alerts.append({
+                                    "type": "dns_bypass",
+                                    "severity": "warning",
+                                    "message": f"Direct DNS query bypassing local resolver to {info.dst}",
+                                    "src": info.src,
+                                    "dst": info.dst,
+                                    "timestamp": info.timestamp,
+                                })
+
         except Exception:
             pass
 
@@ -388,8 +552,8 @@ class PassiveSniffer(BaseSniffer):
 
             # Extract L2 MAC addresses from Ethernet header
             if pkt.haslayer(Ether):
-                src_mac = pkt[Ether].src.upper()
-                dst_mac = pkt[Ether].dst.upper()
+                src_mac = pkt[Ether].src.upper() if pkt[Ether].src else ""
+                dst_mac = pkt[Ether].dst.upper() if pkt[Ether].dst else ""
 
             # Layer 2 — ARP
             if pkt.haslayer(ARP):
