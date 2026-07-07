@@ -1,7 +1,5 @@
 # PyInstaller / Build outputs
 build/
-dist/*
-!dist/NetAudit.exe
 *.spec
 
 # Python bytecode
