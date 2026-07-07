@@ -1,0 +1,17 @@
+# Web Framework
+Flask==3.1.1
+Flask-SocketIO==5.5.1
+eventlet==0.39.1
+
+# Network Discovery
+scapy==2.6.1
+python-nmap==0.7.1
+
+# MAC Vendor Lookup
+mac-vendor-lookup==0.1.12
+
+# Database
+# Using built-in sqlite3 — no extra dependency needed
+
+# Utilities
+psutil==7.0.0
