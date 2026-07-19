@@ -17,6 +17,8 @@ from core.inventory import InventoryManager
 from core.metrics_manager import MetricsManager
 from sniffers.passive_sniffer import PassiveSniffer
 from sniffers.passive_discovery import PassiveDiscovery
+from sniffers.vlan_discovery import VLANDiscovery
+from sniffers.arp_spoofer import ArpSpoofer
 from network.interfaces import get_best_interface
 import api
 
@@ -87,8 +89,14 @@ def create_app() -> tuple[Flask, SocketIO]:
     # 6. Metrics Manager — delta background intelligence
     metrics_manager = MetricsManager()
 
+    # 7. VLAN Discovery Engine — infrastructure protocol intelligence
+    vlan_discovery = VLANDiscovery()
+
+    # 8. ARP Spoofer / MITM Engine — active traffic interception
+    arp_spoofer = ArpSpoofer()
+
     # Inject services into the API layer
-    api.init_services(registry, orchestrator, inventory, sniffer, passive_discovery, metrics_manager)
+    api.init_services(registry, orchestrator, inventory, sniffer, passive_discovery, metrics_manager, vlan_discovery, arp_spoofer)
 
     # ── Register API blueprints ──────────────────────────────
     from api.discovery_routes import discovery_bp
@@ -97,6 +105,8 @@ def create_app() -> tuple[Flask, SocketIO]:
     from api.stats_routes import stats_bp
     from api.passive_discovery_routes import passive_discovery_bp
     from api.metrics_routes import metrics_bp
+    from api.vlan_routes import vlan_bp
+    from api.mitm_routes import mitm_bp
 
     app.register_blueprint(discovery_bp)
     app.register_blueprint(inventory_bp)
@@ -104,6 +114,8 @@ def create_app() -> tuple[Flask, SocketIO]:
     app.register_blueprint(stats_bp)
     app.register_blueprint(passive_discovery_bp)
     app.register_blueprint(metrics_bp)
+    app.register_blueprint(vlan_bp)
+    app.register_blueprint(mitm_bp)
 
     # ── Root route — serves the SPA ──────────────────────────
     @app.route("/")
@@ -149,6 +161,19 @@ def create_app() -> tuple[Flask, SocketIO]:
 
     _auto_start_passive_discovery()
 
+    # ── Auto-start VLAN discovery ─────────────────────────────
+    def _auto_start_vlan_discovery():
+        """Start VLAN discovery automatically on the best interface."""
+        try:
+            best = get_best_interface()
+            iface = best.name if best else ""
+            vlan_discovery.start(interface=iface)
+            print(f"  VLAN Discovery:    AUTO-STARTED on '{iface}'")
+        except Exception as e:
+            print(f"  VLAN Discovery:    Failed to auto-start ({e})")
+
+    _auto_start_vlan_discovery()
+
     # ── Log startup info ─────────────────────────────────────
     scanner_count = len(registry.get_all())
     available_count = len(registry.get_available())
@@ -158,10 +183,12 @@ def create_app() -> tuple[Flask, SocketIO]:
     print(f"{'='*60}")
     print(f"  Scanners registered: {scanner_count} ({available_count} available)")
     for s in registry.get_all():
-        status = "✓" if s.is_available() else "✗"
+        status = "[+]" if s.is_available() else "[-]"
         admin = " [ADMIN]" if s.get_capabilities().requires_admin else ""
         print(f"    {status} {s.display_name}{admin}")
     print(f"  Passive Discovery: {'RUNNING' if passive_discovery.is_running else 'STOPPED'}")
+    print(f"  VLAN Discovery:    {'RUNNING' if vlan_discovery.is_running else 'STOPPED'}")
+    print(f"  ARP Spoofer/MITM:  READY")
     print(f"  Database: {Config.DB_PATH}")
     print(f"  Server:   http://{Config.HOST}:{Config.PORT}")
     print(f"{'='*60}\n")

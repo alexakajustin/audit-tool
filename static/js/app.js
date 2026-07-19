@@ -9,6 +9,7 @@ const App = {
         discovery: DiscoveryPage,
         inventory: InventoryPage,
         sniffer:   SnifferPage,
+        vlans:     VLANsPage,
     },
 
     /**

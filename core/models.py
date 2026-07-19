@@ -232,3 +232,78 @@ class CaptureResult:
             "unique_hosts": list(self.unique_hosts),
             "pcap_path": self.pcap_path,
         }
+
+
+# ---------------------------------------------------------------------------
+# VLAN / Subnet / Switch Intelligence
+# ---------------------------------------------------------------------------
+
+@dataclass
+class VLANInfo:
+    """A discovered VLAN on the network."""
+    vlan_id: int                                # 802.1Q VLAN ID (1-4094)
+    name: str = ""                              # VLAN name (from VTP/CDP/LLDP)
+    subnet: str = ""                            # Associated subnet CIDR if known
+    source_protocol: str = ""                   # How it was discovered: cdp, lldp, dot1q, vtp, ospf, etc.
+    source_switch: str = ""                     # Switch hostname that advertised it
+    is_native: bool = False                     # True if this is the native/untagged VLAN
+    first_seen: float = field(default_factory=time.time)
+    last_seen: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
+class SubnetInfo:
+    """An inferred or discovered subnet."""
+    cidr: str                                   # e.g. "10.20.30.0/24"
+    gateway: str = ""                           # Gateway IP if known
+    dhcp_server: str = ""                       # DHCP server IP if detected
+    vlan_id: Optional[int] = None               # Associated VLAN ID if known
+    device_count: int = 0                       # Number of devices seen in this subnet
+    source_protocol: str = ""                   # How it was discovered
+    source_router: str = ""                     # Router that advertised it
+    metric: int = 0                             # Routing metric if learned from a protocol
+    first_seen: float = field(default_factory=time.time)
+    last_seen: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
+class SwitchInfo:
+    """A network switch or router discovered via CDP/LLDP."""
+    device_id: str                              # Switch hostname / device ID (primary key)
+    management_ip: str = ""                     # Management IP address
+    platform: str = ""                          # Hardware model (e.g. "WS-C3750-48P")
+    software_version: str = ""                  # Firmware / IOS version string
+    local_port: str = ""                        # Port YOU are connected to (e.g. "GigabitEthernet0/1")
+    native_vlan: Optional[int] = None           # Native VLAN on that port
+    capabilities: list[str] = field(default_factory=list)  # e.g. ["Router", "Switch", "IGMP"]
+    vlans_advertised: list[int] = field(default_factory=list)  # VLANs seen from this switch
+    source_protocol: str = ""                   # "cdp" or "lldp"
+    source_mac: str = ""                        # MAC address of the switch port
+    first_seen: float = field(default_factory=time.time)
+    last_seen: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
+class RoutingEntry:
+    """A route learned passively from a routing protocol."""
+    destination: str                            # Destination subnet CIDR
+    next_hop: str = ""                          # Next-hop IP
+    metric: int = 0                             # Route metric
+    protocol: str = ""                          # "ospf", "eigrp", "rip"
+    advertising_router: str = ""                # Router ID that advertised this route
+    area: str = ""                              # OSPF area ID (if applicable)
+    as_number: int = 0                          # EIGRP AS number (if applicable)
+    first_seen: float = field(default_factory=time.time)
+    last_seen: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict:
+        return asdict(self)

@@ -48,6 +48,36 @@ const SnifferPage = {
                     </div>
                 </div>
 
+                <!-- MITM / ARP Spoof Control Panel -->
+                <div class="card" style="margin-bottom:16px;border:1px solid rgba(255,59,92,0.15)">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                        <span style="font-weight:600;font-size:0.9rem;display:flex;align-items:center;gap:8px">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2" style="width:18px;height:18px">
+                                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                                <path d="M12 8v4M12 16h.01"/>
+                            </svg>
+                            <span style="color:var(--red)">ACTIVE INTERCEPTION</span>
+                            <span id="mitm-status-dot" style="width:8px;height:8px;border-radius:50%;background:var(--text-muted);display:inline-block"></span>
+                            <span id="mitm-status-text" style="color:var(--text-muted);font-size:0.72rem;font-weight:400">Inactive</span>
+                        </span>
+                        <div style="display:flex;gap:6px;align-items:center">
+                            <span id="mitm-pkt-count" style="color:var(--text-muted);font-size:0.7rem;font-family:var(--font-mono)"></span>
+                            <button class="btn btn-sm" onclick="SnifferPage.mitmScan()" id="btn-mitm-scan" style="font-size:0.72rem;padding:4px 10px">
+                                Scan Network
+                            </button>
+                            <button class="btn btn-sm" onclick="SnifferPage.mitmStart()" id="btn-mitm-start" style="font-size:0.72rem;padding:4px 10px;display:none;background:rgba(255,59,92,0.15);color:var(--red);border-color:rgba(255,59,92,0.3)">
+                                Start Interception
+                            </button>
+                            <button class="btn btn-sm" onclick="SnifferPage.mitmStop()" id="btn-mitm-stop" style="font-size:0.72rem;padding:4px 10px;display:none;background:rgba(255,59,92,0.3);color:#fff;border-color:var(--red)">
+                                Stop
+                            </button>
+                        </div>
+                    </div>
+                    <div id="mitm-targets" style="display:flex;flex-wrap:wrap;gap:6px;max-height:120px;overflow-y:auto">
+                        <span style="color:var(--text-muted);font-size:0.78rem">Click "Scan Network" to discover devices on your subnet for interception.</span>
+                    </div>
+                </div>
+
                 <!-- Stats -->
                 <div class="sniffer-stats" id="sniff-stats">
                     <div class="sniffer-stat">
@@ -129,6 +159,22 @@ const SnifferPage = {
                         <div id="intel-services" class="intel-scroll" style="max-height:180px;overflow-y:auto">
                             <div class="intel-empty">Detecting services...</div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- DEVICE ACTIVITY PROFILER (the shock-value feature) -->
+                <div class="card" style="margin-bottom:16px">
+                    <div class="card-header">
+                        <span class="card-title" style="display:flex;align-items:center;gap:8px;color:var(--red)">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px">
+                                <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>
+                            </svg>
+                            DEVICE ACTIVITY PROFILER — Who Is Doing What
+                        </span>
+                        <span id="profile-count-badge" style="color:var(--text-muted);font-size:0.75rem">0 devices</span>
+                    </div>
+                    <div id="device-profiles-container" style="max-height:500px;overflow-y:auto">
+                        <div class="intel-empty" style="padding:20px">Capturing traffic to build device profiles... Browse sites on other devices to see their activity appear here.</div>
                     </div>
                 </div>
 
@@ -220,6 +266,7 @@ const SnifferPage = {
                 this._startPolling();
                 await this._loadPackets();
             }
+            await this._pollMitmStatus();
         } catch (e) { /* ignore */ }
     },
 
@@ -246,6 +293,137 @@ const SnifferPage = {
         } catch (e) {
             App.toast('Failed to stop sniffer: ' + e.message, 'error');
         }
+    },
+
+    // ── MITM / ARP Spoofing Controls ────────────────────
+
+    async mitmScan() {
+        const btn = document.getElementById('btn-mitm-scan');
+        if (btn) { btn.textContent = 'Scanning...'; btn.disabled = true; }
+
+        try {
+            const iface = document.getElementById('sniff-interface').value;
+            const resp = await fetch('/api/mitm/scan', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ interface: iface }),
+            });
+            const data = await resp.json();
+
+            if (data.error) {
+                App.toast('Scan failed: ' + data.error, 'error');
+                return;
+            }
+
+            const container = document.getElementById('mitm-targets');
+            if (!container) return;
+
+            if (!data.hosts || data.hosts.length === 0) {
+                container.innerHTML = '<span style="color:var(--text-muted);font-size:0.78rem">No devices found. Make sure you have admin privileges and the correct interface selected.</span>';
+                return;
+            }
+
+            container.innerHTML = data.hosts.map(h => {
+                const isGw = h.is_gateway;
+                const label = h.hostname ? `${h.ip} (${h.hostname})` : h.ip;
+                const color = isGw ? 'var(--orange)' : 'var(--cyan)';
+                const tag = isGw ? ' <span style="color:var(--orange);font-size:0.6rem;font-weight:600">GATEWAY</span>' : '';
+                return `
+                    <label style="display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;background:var(--bg-deep);border:1px solid var(--border);cursor:pointer;font-size:0.75rem;white-space:nowrap;${isGw ? 'opacity:0.4;pointer-events:none' : ''}">
+                        <input type="checkbox" class="mitm-target-chk" value="${h.ip}" data-mac="${h.mac}" ${isGw ? 'disabled' : 'checked'}>
+                        <span style="color:${color};font-family:var(--font-mono)">${h.ip}</span>
+                        <span style="color:var(--text-muted);font-size:0.65rem">${h.mac}</span>
+                        ${h.hostname ? `<span style="color:var(--green);font-size:0.65rem">${h.hostname}</span>` : ''}
+                        ${tag}
+                    </label>
+                `;
+            }).join('');
+
+            // Show the start button
+            const startBtn = document.getElementById('btn-mitm-start');
+            if (startBtn) startBtn.style.display = 'inline-flex';
+
+            App.toast(`Found ${data.hosts.length} devices on subnet`, 'success');
+
+        } catch (e) {
+            App.toast('Network scan failed: ' + e.message, 'error');
+        } finally {
+            if (btn) { btn.textContent = 'Scan Network'; btn.disabled = false; }
+        }
+    },
+
+    async mitmStart() {
+        const checkboxes = document.querySelectorAll('.mitm-target-chk:checked');
+        const targets = Array.from(checkboxes).map(c => c.value);
+
+        if (!targets.length) {
+            App.toast('Select at least one target device', 'error');
+            return;
+        }
+
+        try {
+            const resp = await fetch('/api/mitm/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ targets }),
+            });
+            const data = await resp.json();
+
+            if (data.error) {
+                App.toast('MITM failed: ' + data.error, 'error');
+                return;
+            }
+
+            App.toast(`Intercepting ${data.target_count} device(s) — traffic will now flow through your PC`, 'success');
+            this._showMitmRunning(true);
+
+        } catch (e) {
+            App.toast('Failed to start MITM: ' + e.message, 'error');
+        }
+    },
+
+    async mitmStop() {
+        try {
+            const resp = await fetch('/api/mitm/stop', { method: 'POST' });
+            const data = await resp.json();
+
+            App.toast('Interception stopped — ARP tables restored', 'info');
+            this._showMitmRunning(false);
+
+        } catch (e) {
+            App.toast('Failed to stop MITM: ' + e.message, 'error');
+        }
+    },
+
+    _showMitmRunning(running) {
+        const dot = document.getElementById('mitm-status-dot');
+        const text = document.getElementById('mitm-status-text');
+        const startBtn = document.getElementById('btn-mitm-start');
+        const stopBtn = document.getElementById('btn-mitm-stop');
+        const scanBtn = document.getElementById('btn-mitm-scan');
+
+        if (dot) dot.style.background = running ? 'var(--red)' : 'var(--text-muted)';
+        if (dot && running) dot.style.boxShadow = '0 0 8px var(--red)';
+        if (dot && !running) dot.style.boxShadow = 'none';
+        if (text) {
+            text.textContent = running ? 'ACTIVE — Intercepting' : 'Inactive';
+            text.style.color = running ? 'var(--red)' : 'var(--text-muted)';
+        }
+        if (startBtn) startBtn.style.display = running ? 'none' : 'inline-flex';
+        if (stopBtn) stopBtn.style.display = running ? 'inline-flex' : 'none';
+        if (scanBtn) scanBtn.disabled = running;
+    },
+
+    async _pollMitmStatus() {
+        try {
+            const resp = await fetch('/api/mitm/status');
+            const data = await resp.json();
+            if (data.is_running) {
+                this._showMitmRunning(true);
+                const pktEl = document.getElementById('mitm-pkt-count');
+                if (pktEl) pktEl.textContent = `${data.packets_sent} ARP pkts sent`;
+            }
+        } catch (e) { /* ignore */ }
     },
 
     clearConsole() {
@@ -311,7 +489,7 @@ const SnifferPage = {
             const protoVisible = this._visibleProtocols.has(proto);
             const srcVisible = !src || this._visibleIps.has(src);
             const dstVisible = !dst || this._visibleIps.has(dst);
-            const ipVisible = srcVisible || dstVisible;  // Show if EITHER src or dst is visible
+            const ipVisible = srcVisible && dstVisible;  // Hide if EITHER src or dst is filtered out
 
             line.style.display = (protoVisible && ipVisible) ? 'flex' : 'none';
         });
@@ -452,6 +630,9 @@ const SnifferPage = {
 
             // Update Network Intelligence panels
             this._updateIntel(stats);
+
+            // Poll MITM status
+            this._pollMitmStatus();
         } catch (e) { /* retry */ }
     },
 
@@ -535,6 +716,94 @@ const SnifferPage = {
                 `).join('');
             }
         }
+
+        // ── Device Activity Profiles ────────────────────
+        if (stats.device_profiles) {
+            this._renderDeviceProfiles(stats.device_profiles);
+        }
+    },
+
+    /**
+     * Render per-device activity profiles — the "shock value" panel.
+     */
+    _renderDeviceProfiles(profiles) {
+        const container = document.getElementById('device-profiles-container');
+        const badge = document.getElementById('profile-count-badge');
+        if (!container) return;
+
+        // Filter out local IP and devices with no sites
+        const filtered = profiles.filter(p => p.ip !== this._localIp && (p.sites_visited.length > 0 || p.http_urls.length > 0));
+
+        if (badge) badge.textContent = `${filtered.length} device${filtered.length !== 1 ? 's' : ''} profiled`;
+
+        if (!filtered.length) {
+            container.innerHTML = '<div class="intel-empty" style="padding:20px">Capturing traffic to build device profiles... Browse sites on other devices to see their activity appear here.</div>';
+            return;
+        }
+
+        container.innerHTML = filtered.map(p => {
+            const isLocal = p.ip === this._localIp;
+            const hostLabel = p.hostname ? `${p.hostname}` : '';
+            const osLabel = p.os ? `<span style="color:var(--purple);font-size:0.7rem;margin-left:6px">${this._escapeHtml(p.os)}</span>` : '';
+            const macLabel = p.mac ? `<span style="color:var(--text-muted);font-size:0.68rem;font-family:var(--font-mono);margin-left:6px">${p.mac}</span>` : '';
+
+            // Sites visited — the key shock-value data
+            const sitesHtml = p.sites_visited.slice(0, 30).map(([domain, count]) => {
+                // Color-code by type
+                let color = 'var(--text-secondary)';
+                const d = domain.toLowerCase();
+                if (d.includes('facebook') || d.includes('instagram') || d.includes('tiktok') || d.includes('twitter') || d.includes('reddit') || d.includes('snapchat'))
+                    color = 'var(--cyan)';
+                else if (d.includes('google') || d.includes('youtube') || d.includes('bing'))
+                    color = 'var(--green)';
+                else if (d.includes('bank') || d.includes('paypal') || d.includes('stripe'))
+                    color = 'var(--orange)';
+
+                return `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:4px;background:rgba(255,255,255,0.03);border:1px solid var(--border);font-size:0.72rem;color:${color};font-family:var(--font-mono)">${this._escapeHtml(domain)}<span style="color:var(--text-muted);font-size:0.6rem;margin-left:2px">×${count}</span></span>`;
+            }).join(' ');
+
+            // HTTP URLs (cleartext — extra shocking)
+            const urlsHtml = p.http_urls.length > 0
+                ? `<div style="margin-top:6px">
+                     <span style="color:var(--red);font-size:0.68rem;font-weight:600">⚠ CLEARTEXT HTTP REQUESTS:</span>
+                     <div style="margin-top:3px;display:flex;flex-direction:column;gap:2px;max-height:80px;overflow-y:auto">
+                       ${p.http_urls.slice(-10).map(url => `<div style="font-family:var(--font-mono);font-size:0.68rem;color:var(--orange);padding:1px 6px;background:rgba(255,59,92,0.06);border-radius:3px;word-break:break-all">${this._escapeHtml(url)}</div>`).join('')}
+                     </div>
+                   </div>`
+                : '';
+
+            // User Agent
+            const uaHtml = p.user_agents && p.user_agents.length > 0
+                ? `<div style="margin-top:4px;font-size:0.65rem;color:var(--text-muted)">🌐 ${this._escapeHtml(p.user_agents[0].substring(0, 120))}</div>`
+                : '';
+
+            // Services
+            const svcsHtml = p.services && p.services.length > 0
+                ? `<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${p.services.map(s => {
+                    const danger = ['FTP','Telnet','HTTP','SNMP','TFTP'].includes(s);
+                    return `<span class="badge badge-protocol" style="font-size:0.65rem;${danger ? 'background:rgba(255,59,92,0.15);color:var(--red)' : ''}">${s}</span>`;
+                  }).join('')}</div>`
+                : '';
+
+            return `
+                <div style="padding:12px 16px;border-bottom:1px solid var(--border);${isLocal ? 'opacity:0.3' : ''}">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                            <span style="font-weight:600;color:var(--cyan);font-family:var(--font-mono);font-size:0.85rem">${p.ip}</span>
+                            ${hostLabel ? `<span style="color:var(--green);font-size:0.75rem;font-weight:500">${this._escapeHtml(hostLabel)}</span>` : ''}
+                            ${osLabel}${macLabel}
+                        </div>
+                        <div style="display:flex;gap:12px;align-items:center">
+                            <span style="font-size:0.7rem;color:var(--text-muted)" title="DNS queries">🔍 ${p.dns_count || 0}</span>
+                            <span style="font-size:0.7rem;color:var(--text-muted)" title="TLS SNI captures">🔒 ${p.sni_count || 0}</span>
+                            <span style="font-size:0.7rem;color:var(--text-muted)">${this._formatBytes(p.data_volume)}</span>
+                        </div>
+                    </div>
+                    ${p.sites_visited.length > 0 ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">${sitesHtml}</div>` : ''}
+                    ${urlsHtml}${uaHtml}${svcsHtml}
+                </div>
+            `;
+        }).join('');
     },
 
     async _loadPackets() {
@@ -582,7 +851,7 @@ const SnifferPage = {
                 const protoVisible = this._visibleProtocols.has(pkt.protocol);
                 const srcVisible = !pkt.src || this._visibleIps.has(pkt.src);
                 const dstVisible = !pkt.dst || this._visibleIps.has(pkt.dst);
-                const ipVisible = srcVisible || dstVisible;
+                const ipVisible = srcVisible && dstVisible;
                 if (!(protoVisible && ipVisible)) {
                     line.style.display = 'none';
                 }

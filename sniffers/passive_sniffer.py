@@ -48,6 +48,15 @@ class PassiveSniffer(BaseSniffer):
         self._tcp_syn_scans: dict[str, set[int]] = {}              # IP -> set of destination ports scanned
         self._alerts_triggered: set[str] = set()                   # Avoid duplicate alerts for the same event
 
+        # ── Per-device Deep Activity Profiling ───────────────
+        self._device_dns: dict[str, OrderedDict] = {}              # IP -> {domain: count}  (DNS queries per device)
+        self._device_sni: dict[str, OrderedDict] = {}              # IP -> {domain: count}  (TLS SNI per device)
+        self._device_http_hosts: dict[str, set] = {}               # IP -> set of HTTP Host headers
+        self._device_http_urls: dict[str, list] = {}               # IP -> list of full HTTP URLs (GET/POST)
+        self._device_user_agents: dict[str, set] = {}              # IP -> set of User-Agent strings
+        self._device_hostnames: dict[str, str] = {}                # IP -> hostname (from DHCP/NetBIOS/mDNS)
+        self._device_os: dict[str, str] = {}                       # IP -> OS guess (from User-Agent)
+
     @property
     def name(self) -> str:
         return "passive_sniffer"
@@ -83,6 +92,13 @@ class PassiveSniffer(BaseSniffer):
         self._dhcp_servers = set()
         self._tcp_syn_scans = {}
         self._alerts_triggered = set()
+        self._device_dns = {}
+        self._device_sni = {}
+        self._device_http_hosts = {}
+        self._device_http_urls = {}
+        self._device_user_agents = {}
+        self._device_hostnames = {}
+        self._device_os = {}
 
         # Detect local IP for this interface
         self._local_ip = self._detect_local_ip(interface)
@@ -151,12 +167,61 @@ class PassiveSniffer(BaseSniffer):
                 "top_talkers": vol_sorted,
                 "connections": connections,
                 "mac_map": dict(self._mac_to_ip),
+                # Per-device deep profiles
+                "device_profiles": self._build_device_profiles(),
             }
 
     def get_recent_packets(self, count: int = 50) -> list[dict]:
         """Get the most recent N packets as dicts."""
         with self._lock:
             return [p.to_dict() for p in self._packets[-count:]]
+
+    def _build_device_profiles(self) -> list[dict]:
+        """Build per-device activity profiles (called inside lock)."""
+        profiles = []
+        all_ips = set()
+        all_ips.update(self._device_dns.keys())
+        all_ips.update(self._device_sni.keys())
+        all_ips.update(self._device_http_hosts.keys())
+        all_ips.update(self._data_volume.keys())
+
+        for ip in sorted(all_ips):
+            # Combine DNS + SNI + HTTP into unified browsing list
+            sites = OrderedDict()
+            # SNI is the richest source (HTTPS domains)
+            for domain, count in self._device_sni.get(ip, {}).items():
+                sites[domain] = sites.get(domain, 0) + count
+            # DNS queries
+            for domain, count in self._device_dns.get(ip, {}).items():
+                sites[domain] = sites.get(domain, 0) + count
+            # HTTP hosts
+            for host in self._device_http_hosts.get(ip, set()):
+                sites[host] = sites.get(host, 0) + 1
+
+            # Sort by count descending
+            sorted_sites = sorted(sites.items(), key=lambda x: x[1], reverse=True)
+
+            profile = {
+                "ip": ip,
+                "hostname": self._device_hostnames.get(ip, ""),
+                "mac": self._ip_to_mac.get(ip, ""),
+                "os": self._device_os.get(ip, ""),
+                "user_agents": list(self._device_user_agents.get(ip, set()))[:5],
+                "data_volume": self._data_volume.get(ip, 0),
+                "sites_visited": sorted_sites[:50],
+                "http_urls": self._device_http_urls.get(ip, [])[-20:],
+                "services": list(self._services_seen.get(ip, set())),
+                "connections": list(self._host_connections.get(ip, set()))[:15],
+                "dns_count": sum(self._device_dns.get(ip, {}).values()),
+                "sni_count": sum(self._device_sni.get(ip, {}).values()),
+            }
+            # Only include devices with some activity
+            if profile["sites_visited"] or profile["data_volume"] > 0:
+                profiles.append(profile)
+
+        # Sort by data volume descending
+        profiles.sort(key=lambda p: p["data_volume"], reverse=True)
+        return profiles[:30]
 
     def export_pcap(self, filepath: str) -> str:
         try:
@@ -280,7 +345,7 @@ class PassiveSniffer(BaseSniffer):
             if info.src_mac and info.src and not info.src.startswith("ff:"):
                 self._mac_to_ip[info.src_mac] = info.src
 
-            # Track DNS queries (what sites are being browsed)
+            # Track DNS queries (what sites are being browsed) — GLOBAL + PER-DEVICE
             if pkt.haslayer(DNS):
                 dns = pkt[DNS]
                 if dns.qr == 0 and dns.qd:  # Query
@@ -290,6 +355,12 @@ class PassiveSniffer(BaseSniffer):
                     qname = str(qname).rstrip(".")
                     if qname and len(qname) > 3 and "." in qname:
                         self._dns_queries[qname] = self._dns_queries.get(qname, 0) + 1
+                        # Per-device DNS tracking
+                        querier = info.src
+                        if querier:
+                            if querier not in self._device_dns:
+                                self._device_dns[querier] = OrderedDict()
+                            self._device_dns[querier][qname] = self._device_dns[querier].get(qname, 0) + 1
 
             # Track services per host by port
             if info.dst_port and info.dst:
@@ -308,27 +379,124 @@ class PassiveSniffer(BaseSniffer):
                         self._services_seen[info.dst] = set()
                     self._services_seen[info.dst].add(svc)
 
+            # ── TLS SNI Extraction (HTTPS domain visibility) ─────
+            # Even on HTTPS, the TLS ClientHello sends the server name in cleartext!
+            if pkt.haslayer(TCP) and pkt.haslayer(Raw):
+                tcp = pkt[TCP]
+                if tcp.dport in (443, 8443, 993, 995, 465, 636, 989, 990, 5061):
+                    try:
+                        payload = bytes(pkt[Raw].load)
+                        sni = self._extract_tls_sni(payload)
+                        if sni:
+                            # Per-device SNI tracking
+                            client_ip = info.src
+                            if client_ip:
+                                if client_ip not in self._device_sni:
+                                    self._device_sni[client_ip] = OrderedDict()
+                                self._device_sni[client_ip][sni] = self._device_sni[client_ip].get(sni, 0) + 1
+                    except Exception:
+                        pass
+
             # ── Security alerts ──────────────────────────────
-            # Cleartext HTTP traffic
+            # Cleartext HTTP traffic — deep extraction (Host, URL, User-Agent)
             if info.protocol == "HTTP" and pkt.haslayer(Raw):
                 raw = bytes(pkt[Raw].load)
-                # Check for HTTP Host header
                 try:
                     text = raw.decode("utf-8", errors="ignore")
-                    for line in text.split("\r\n"):
-                        if line.upper().startswith("HOST:"):
-                            host = line[5:].strip()
-                            self._http_hosts.add(host)
-                            if len(self._security_alerts) < 200:
-                                self._security_alerts.append({
-                                    "type": "cleartext_http",
-                                    "severity": "warning",
-                                    "message": f"Cleartext HTTP to {host}",
-                                    "src": info.src,
-                                    "dst": info.dst,
-                                    "timestamp": info.timestamp,
-                                })
-                            break
+                    lines = text.split("\r\n")
+                    request_line = lines[0] if lines else ""
+                    host_header = ""
+                    user_agent = ""
+
+                    for line in lines[1:]:
+                        upper = line.upper()
+                        if upper.startswith("HOST:"):
+                            host_header = line[5:].strip()
+                        elif upper.startswith("USER-AGENT:"):
+                            user_agent = line[11:].strip()
+
+                    if host_header:
+                        self._http_hosts.add(host_header)
+                        # Per-device HTTP tracking
+                        if info.src:
+                            if info.src not in self._device_http_hosts:
+                                self._device_http_hosts[info.src] = set()
+                            self._device_http_hosts[info.src].add(host_header)
+
+                            # Capture full URL (GET /path HTTP/1.1)
+                            if request_line and (request_line.startswith("GET ") or request_line.startswith("POST ")):
+                                method_path = request_line.split(" ")[0:2]
+                                if len(method_path) == 2:
+                                    full_url = f"{method_path[0]} http://{host_header}{method_path[1]}"
+                                    if info.src not in self._device_http_urls:
+                                        self._device_http_urls[info.src] = []
+                                    if len(self._device_http_urls[info.src]) < 100:
+                                        self._device_http_urls[info.src].append(full_url)
+
+                        if user_agent and info.src:
+                            if info.src not in self._device_user_agents:
+                                self._device_user_agents[info.src] = set()
+                            if len(self._device_user_agents[info.src]) < 10:
+                                self._device_user_agents[info.src].add(user_agent[:200])
+                            # Guess OS from User-Agent
+                            if info.src not in self._device_os or not self._device_os[info.src]:
+                                self._device_os[info.src] = self._guess_os(user_agent)
+
+                        if host_header and len(self._security_alerts) < 200:
+                            self._security_alerts.append({
+                                "type": "cleartext_http",
+                                "severity": "warning",
+                                "message": f"Cleartext HTTP to {host_header}",
+                                "src": info.src,
+                                "dst": info.dst,
+                                "timestamp": info.timestamp,
+                            })
+                except Exception:
+                    pass
+
+            # ── DHCP Hostname Extraction ─────────────────────
+            if info.protocol == "DHCP" and pkt.haslayer("DHCP"):
+                try:
+                    dhcp_opts = pkt["DHCP"].options
+                    for opt in dhcp_opts:
+                        if isinstance(opt, tuple):
+                            if opt[0] == "hostname":
+                                hostname = opt[1].decode("utf-8", errors="ignore") if isinstance(opt[1], bytes) else str(opt[1])
+                                if hostname and info.src and info.src != "0.0.0.0":
+                                    self._device_hostnames[info.src] = hostname
+                except Exception:
+                    pass
+
+            # ── NetBIOS Name Extraction ──────────────────────
+            if pkt.haslayer(UDP) and pkt[UDP].sport == 137 and pkt.haslayer(Raw):
+                try:
+                    raw_data = bytes(pkt[Raw].load)
+                    if len(raw_data) > 56:
+                        # NetBIOS name is at offset 57, 15 bytes, space-padded
+                        name_bytes = raw_data[57:72]
+                        name = name_bytes.decode("ascii", errors="ignore").strip()
+                        if name and info.src and len(name) > 1:
+                            self._device_hostnames[info.src] = name
+                except Exception:
+                    pass
+
+            # ── mDNS Hostname Extraction ─────────────────────
+            if info.protocol == "mDNS" and pkt.haslayer(DNS):
+                try:
+                    dns_layer = pkt[DNS]
+                    if dns_layer.ancount and dns_layer.ancount > 0:
+                        for i in range(min(dns_layer.ancount, 5)):
+                            rr = dns_layer.an[i] if hasattr(dns_layer.an, '__getitem__') else dns_layer.an
+                            if hasattr(rr, 'rrname'):
+                                rrname = rr.rrname
+                                if isinstance(rrname, bytes):
+                                    rrname = rrname.decode("utf-8", errors="ignore")
+                                rrname = str(rrname).rstrip(".")
+                                if rrname.endswith(".local") and info.src:
+                                    hostname = rrname.replace(".local", "")
+                                    if hostname:
+                                        self._device_hostnames[info.src] = hostname
+                                    break
                 except Exception:
                     pass
 
@@ -533,6 +701,111 @@ class PassiveSniffer(BaseSniffer):
 
         except Exception:
             pass
+
+    def _extract_tls_sni(self, payload: bytes) -> str:
+        """
+        Extract Server Name Indication (SNI) from a TLS ClientHello.
+
+        Even HTTPS traffic leaks the destination domain in the TLS handshake.
+        This parses the raw ClientHello bytes to find the server_name extension.
+        """
+        try:
+            if len(payload) < 11:
+                return ""
+
+            # TLS record: ContentType(1) Version(2) Length(2) HandshakeType(1) ...
+            content_type = payload[0]
+            if content_type != 0x16:  # Not a Handshake record
+                return ""
+
+            handshake_type = payload[5]
+            if handshake_type != 0x01:  # Not ClientHello
+                return ""
+
+            # ClientHello structure:
+            # HandshakeType(1) Length(3) Version(2) Random(32) SessionIDLen(1) SessionID(var)
+            # CipherSuitesLen(2) CipherSuites(var) CompressionLen(1) Compression(var)
+            # ExtensionsLen(2) Extensions(var)
+
+            offset = 5 + 1 + 3 + 2 + 32  # Skip to SessionID length (offset 43)
+
+            if offset >= len(payload):
+                return ""
+
+            # Skip Session ID
+            session_id_len = payload[offset]
+            offset += 1 + session_id_len
+
+            if offset + 2 > len(payload):
+                return ""
+
+            # Skip Cipher Suites
+            cipher_suites_len = (payload[offset] << 8) | payload[offset + 1]
+            offset += 2 + cipher_suites_len
+
+            if offset + 1 > len(payload):
+                return ""
+
+            # Skip Compression Methods
+            compression_len = payload[offset]
+            offset += 1 + compression_len
+
+            if offset + 2 > len(payload):
+                return ""
+
+            # Extensions
+            extensions_len = (payload[offset] << 8) | payload[offset + 1]
+            offset += 2
+            extensions_end = offset + extensions_len
+
+            while offset + 4 <= min(extensions_end, len(payload)):
+                ext_type = (payload[offset] << 8) | payload[offset + 1]
+                ext_len = (payload[offset + 2] << 8) | payload[offset + 3]
+                offset += 4
+
+                if ext_type == 0x0000:  # server_name extension
+                    if offset + 5 <= len(payload):
+                        # SNI list length(2), name type(1), name length(2), name(var)
+                        name_type = payload[offset + 2]
+                        name_len = (payload[offset + 3] << 8) | payload[offset + 4]
+
+                        if name_type == 0x00 and offset + 5 + name_len <= len(payload):
+                            server_name = payload[offset + 5: offset + 5 + name_len]
+                            sni = server_name.decode("ascii", errors="ignore").strip()
+                            if sni and "." in sni and len(sni) > 3:
+                                return sni
+                    return ""
+
+                offset += ext_len
+
+        except Exception:
+            pass
+        return ""
+
+    def _guess_os(self, user_agent: str) -> str:
+        """Guess the operating system from an HTTP User-Agent string."""
+        ua = user_agent.lower()
+        if "windows nt 10" in ua:
+            return "Windows 10/11"
+        elif "windows nt 6.3" in ua:
+            return "Windows 8.1"
+        elif "windows nt 6.1" in ua:
+            return "Windows 7"
+        elif "windows" in ua:
+            return "Windows"
+        elif "macintosh" in ua or "mac os x" in ua:
+            return "macOS"
+        elif "iphone" in ua:
+            return "iOS (iPhone)"
+        elif "ipad" in ua:
+            return "iOS (iPad)"
+        elif "android" in ua:
+            return "Android"
+        elif "linux" in ua:
+            return "Linux"
+        elif "chromeos" in ua or "cros" in ua:
+            return "ChromeOS"
+        return ""
 
     def _parse_packet(self, pkt) -> Optional[PacketInfo]:
         """Parse a Scapy packet into a PacketInfo summary with enhanced protocol detection."""

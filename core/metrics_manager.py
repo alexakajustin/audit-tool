@@ -88,6 +88,22 @@ class MetricsManager:
         # Calculate delta packets captured during this session
         self.packets_gathered = max(0, end_packet_count - self.start_packet_count)
 
+        # Capture VLAN intelligence snapshot
+        self.vlan_intel = {"switches": [], "vlans": [], "subnets": [], "routes": []}
+        try:
+            import api
+            if hasattr(api, 'vlan_discovery') and api.vlan_discovery:
+                intel = api.vlan_discovery.get_full_intelligence()
+                self.vlan_intel = {
+                    "switches": intel.get("switches", []),
+                    "vlans": intel.get("vlans", []),
+                    "subnets": intel.get("subnets", []),
+                    "routes": intel.get("routes", []),
+                    "protocol_counts": intel.get("status", {}).get("protocol_counts", {}),
+                }
+        except Exception as e:
+            print(f"[MetricsManager] Warning: failed to capture VLAN intelligence ({e})")
+
         # Build PDF file path
         os.makedirs(export_dir, exist_ok=True)
         filename = f"security_report_{int(time.time())}.pdf"
@@ -318,6 +334,147 @@ class MetricsManager:
                         row.cell(", ".join(str(s) for s in svcs))
                 pdf.ln(8)
 
+        # ── VLAN & Network Infrastructure Intelligence ──
+        vlan_intel = getattr(self, "vlan_intel", {})
+        switches = vlan_intel.get("switches", [])
+        vlans = vlan_intel.get("vlans", [])
+        subnets = vlan_intel.get("subnets", [])
+        routes = vlan_intel.get("routes", [])
+        vlan_proto_counts = vlan_intel.get("protocol_counts", {})
+
+        has_vlan_data = switches or vlans or subnets or routes
+
+        if has_vlan_data:
+            # Section header
+            pdf.set_font("helvetica", "B", 14)
+            pdf.set_text_color(*c_dark_navy)
+            pdf.cell(0, 10, "Network Infrastructure Intelligence (VLAN / Routing)", ln=True)
+            pdf.set_font("helvetica", "I", 8.5)
+            pdf.set_text_color(*c_muted)
+            proto_summary = ", ".join(f"{k}: {v}" for k, v in sorted(vlan_proto_counts.items(), key=lambda x: x[1], reverse=True)) if vlan_proto_counts else "None"
+            pdf.cell(0, 5, f"Infrastructure protocol packets captured: {proto_summary}", ln=True)
+            pdf.ln(4)
+
+        # Discovered Switches (CDP / LLDP)
+        if switches:
+            pdf.set_font("helvetica", "B", 12)
+            pdf.set_text_color(*c_dark_navy)
+            pdf.cell(0, 8, "Discovered Switches & Routers (CDP / LLDP)", ln=True)
+            pdf.ln(2)
+
+            with pdf.table(borders_layout="HORIZONTAL_LINES", text_align="LEFT") as table:
+                pdf.set_font("helvetica", "B", 9)
+                row = table.row()
+                row.cell("Device Name")
+                row.cell("Mgmt IP")
+                row.cell("Platform")
+                row.cell("Your Port")
+                row.cell("Native VLAN")
+                row.cell("Protocol")
+
+                pdf.set_font("helvetica", "", 9)
+                pdf.set_text_color(*c_text_dark)
+                for sw in switches[:15]:
+                    row = table.row()
+                    row.cell(str(sw.get("device_id", ""))[:30])
+                    row.cell(str(sw.get("management_ip", "")))
+                    row.cell(str(sw.get("platform", ""))[:35])
+                    row.cell(str(sw.get("local_port", ""))[:25])
+                    nv = sw.get("native_vlan")
+                    row.cell(str(nv) if nv is not None else "—")
+                    row.cell(str(sw.get("source_protocol", "")).upper())
+            pdf.ln(8)
+
+        # Discovered VLANs
+        if vlans:
+            pdf.set_font("helvetica", "B", 12)
+            pdf.set_text_color(*c_dark_navy)
+            pdf.cell(0, 8, f"Discovered VLANs ({len(vlans)} total)", ln=True)
+            pdf.ln(2)
+
+            with pdf.table(borders_layout="HORIZONTAL_LINES", text_align="LEFT") as table:
+                pdf.set_font("helvetica", "B", 9)
+                row = table.row()
+                row.cell("VLAN ID")
+                row.cell("Name")
+                row.cell("Subnet")
+                row.cell("Source")
+                row.cell("Switch")
+                row.cell("Native")
+
+                pdf.set_font("helvetica", "", 9)
+                pdf.set_text_color(*c_text_dark)
+                for v in vlans[:25]:
+                    row = table.row()
+                    row.cell(str(v.get("vlan_id", "")))
+                    row.cell(str(v.get("name", ""))[:25])
+                    row.cell(str(v.get("subnet", "")) or "—")
+                    row.cell(str(v.get("source_protocol", "")).upper())
+                    row.cell(str(v.get("source_switch", ""))[:20] or "—")
+                    row.cell("Yes" if v.get("is_native") else "")
+            pdf.ln(8)
+
+        # Discovered Subnets
+        if subnets:
+            pdf.set_font("helvetica", "B", 12)
+            pdf.set_text_color(*c_dark_navy)
+            pdf.cell(0, 8, f"Discovered Subnets ({len(subnets)} total)", ln=True)
+            pdf.ln(2)
+
+            with pdf.table(borders_layout="HORIZONTAL_LINES", text_align="LEFT") as table:
+                pdf.set_font("helvetica", "B", 9)
+                row = table.row()
+                row.cell("Subnet CIDR")
+                row.cell("Gateway")
+                row.cell("VLAN")
+                row.cell("Hosts Seen")
+                row.cell("Source")
+                row.cell("Router")
+
+                pdf.set_font("helvetica", "", 9)
+                pdf.set_text_color(*c_text_dark)
+                for s in subnets[:25]:
+                    row = table.row()
+                    row.cell(str(s.get("cidr", "")))
+                    row.cell(str(s.get("gateway", "")) or "—")
+                    vid = s.get("vlan_id")
+                    row.cell(str(vid) if vid is not None else "—")
+                    dc = s.get("device_count", 0)
+                    row.cell(str(dc) if dc else "—")
+                    row.cell(str(s.get("source_protocol", "")).upper()[:20])
+                    row.cell(str(s.get("source_router", ""))[:20] or "—")
+            pdf.ln(8)
+
+        # Routing Table
+        if routes:
+            pdf.set_font("helvetica", "B", 12)
+            pdf.set_text_color(*c_dark_navy)
+            pdf.cell(0, 8, f"Learned Routes ({len(routes)} entries)", ln=True)
+            pdf.ln(2)
+
+            with pdf.table(borders_layout="HORIZONTAL_LINES", text_align="LEFT") as table:
+                pdf.set_font("helvetica", "B", 9)
+                row = table.row()
+                row.cell("Destination")
+                row.cell("Next Hop")
+                row.cell("Metric")
+                row.cell("Protocol")
+                row.cell("Router")
+                row.cell("Area / AS")
+
+                pdf.set_font("helvetica", "", 9)
+                pdf.set_text_color(*c_text_dark)
+                for r in routes[:30]:
+                    row = table.row()
+                    row.cell(str(r.get("destination", "")))
+                    row.cell(str(r.get("next_hop", "")) or "—")
+                    row.cell(str(r.get("metric", 0)))
+                    row.cell(str(r.get("protocol", "")).upper())
+                    row.cell(str(r.get("advertising_router", ""))[:20] or "—")
+                    area_as = r.get("area", "") or (str(r.get("as_number", "")) if r.get("as_number") else "")
+                    row.cell(str(area_as) or "—")
+            pdf.ln(8)
+
         # ── Detailed Security Findings ──
         pdf.set_font("helvetica", "B", 12)
         pdf.set_text_color(*c_dark_navy)
@@ -378,6 +535,23 @@ class MetricsManager:
             recommendations.append("Block outbound port 53 traffic from local workstations except to authorized corporate DNS resolvers.")
         if "cleartext_http" in alert_types:
             recommendations.append("Transition unencrypted web administration pages and internal services to HTTP over TLS (HTTPS).")
+
+        # VLAN-related recommendations
+        vlan_intel = getattr(self, "vlan_intel", {})
+        if vlan_intel.get("switches"):
+            # Check for CDP being enabled (information leak)
+            cdp_switches = [s for s in vlan_intel["switches"] if s.get("source_protocol") == "cdp"]
+            if cdp_switches:
+                recommendations.append("CDP is broadcasting sensitive infrastructure details (switch models, IOS versions, VLANs). Disable CDP on access ports or restrict to trusted interfaces using 'no cdp enable'.")
+            lldp_switches = [s for s in vlan_intel["switches"] if s.get("source_protocol") == "lldp"]
+            if lldp_switches:
+                recommendations.append("LLDP is revealing switch topology and management addresses. Consider limiting LLDP on user-facing ports with 'no lldp transmit'.")
+        if vlan_intel.get("vlans"):
+            native_vlans = [v for v in vlan_intel["vlans"] if v.get("is_native") and v.get("vlan_id") == 1]
+            if native_vlans:
+                recommendations.append("Native VLAN is set to the default VLAN 1. Change the native VLAN to an unused VLAN ID to mitigate VLAN hopping attacks.")
+        if vlan_intel.get("routes"):
+            recommendations.append("Routing protocol advertisements (OSPF/EIGRP/RIP) are visible on access ports. Enable routing protocol authentication and restrict advertisements to designated interfaces.")
             
         if not recommendations:
             recommendations.append("Maintain continuous passive monitoring to identify unauthorized assets or communication drifts.")

@@ -1287,3 +1287,135 @@ select.form-control option {
         grid-template-columns: 1fr 1fr;
     }
 }
+
+/* ================================================================
+   VLAN Intelligence Page
+   ================================================================ */
+
+/* Switch Cards Grid */
+.switch-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 14px;
+    padding: 4px 0;
+}
+
+.switch-card {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s;
+}
+.switch-card:hover {
+    border-color: var(--border-accent);
+    box-shadow: var(--shadow-glow);
+    transform: translateY(-2px);
+}
+
+.switch-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+}
+.switch-card-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+}
+
+.switch-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.switch-detail {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+.switch-label {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    min-width: 80px;
+    flex-shrink: 0;
+    padding-top: 2px;
+}
+.switch-value {
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    word-break: break-word;
+}
+
+.switch-card-footer {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+
+/* VLAN Badges */
+.vlan-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+}
+.vlan-badge-cyan {
+    background: rgba(0, 240, 255, 0.12);
+    color: var(--cyan);
+    border: 1px solid rgba(0, 240, 255, 0.25);
+}
+.vlan-badge-green {
+    background: rgba(0, 255, 136, 0.12);
+    color: var(--green);
+    border: 1px solid rgba(0, 255, 136, 0.25);
+}
+.vlan-badge-purple {
+    background: rgba(165, 94, 234, 0.12);
+    color: var(--purple);
+    border: 1px solid rgba(165, 94, 234, 0.25);
+}
+.vlan-badge-red {
+    background: rgba(255, 59, 92, 0.12);
+    color: var(--red);
+    border: 1px solid rgba(255, 59, 92, 0.25);
+}
+.vlan-badge-muted {
+    background: rgba(90, 99, 120, 0.12);
+    color: var(--text-muted);
+    border: 1px solid rgba(90, 99, 120, 0.25);
+}
+
+/* VLAN ID Badge (numeric pill) */
+.vlan-id-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    background: rgba(0, 240, 255, 0.1);
+    color: var(--cyan);
+    border: 1px solid rgba(0, 240, 255, 0.2);
+}
+
+/* Responsive Switch Cards */
+@media (max-width: 768px) {
+    .switch-cards-grid {
+        grid-template-columns: 1fr;
+    }
+}
