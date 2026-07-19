@@ -234,6 +234,14 @@ const SnifferPage = {
             </div>
         `;
 
+        // Clear state on page load so filters re-render correctly
+        this._knownProtocols.clear();
+        this._visibleProtocols.clear();
+        this._knownIps.clear();
+        this._visibleIps.clear();
+        this._lastPacketId = null;
+        this._packetCount = 0;
+
         await this._loadInterfaces();
         await this._checkStatus();
     },
