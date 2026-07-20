@@ -385,6 +385,7 @@ const VLANsPage = {
                 <td>${s.device_count || '—'}</td>
                 <td><span class="protocol-tag" style="border-color:var(--purple);color:var(--purple);font-size:0.7rem">${(s.source_protocol || '—').toUpperCase()}</span></td>
                 <td>${this._escHtml(s.source_router || '—')}</td>
+                <td><button class="btn btn-sm btn-outline-cyan" onclick="VLANsPage.scanSubnet('${s.cidr}')" style="font-size:0.7rem;padding:2px 6px">Scan Subnet</button></td>
             </tr>
         `).join('');
 
@@ -392,7 +393,7 @@ const VLANsPage = {
             <div class="table-wrapper">
                 <table class="data-table">
                     <thead><tr>
-                        <th>Subnet CIDR</th><th>Gateway</th><th>VLAN</th><th>Hosts</th><th>Source</th><th>Router</th>
+                        <th>Subnet CIDR</th><th>Gateway</th><th>VLAN</th><th>Hosts</th><th>Source</th><th>Router</th><th>Actions</th>
                     </tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
@@ -447,6 +448,19 @@ const VLANsPage = {
         if (seconds < 60) return `${seconds}s ago`;
         if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
         return `${Math.floor(seconds / 3600)}h ago`;
+    },
+
+    async scanSubnet(cidr) {
+        try {
+            App.toast(`Starting active Nmap scan on ${cidr}...`, 'info');
+            await API.post('/api/scanners/start', {
+                scanner_id: 'nmap_scanner',
+                target: cidr
+            });
+            App.toast(`Scan initiated for ${cidr}! Check Dashboard or Scanners tab for progress.`, 'success');
+        } catch(e) {
+            App.toast(`Failed to start scan for ${cidr}`, 'error');
+        }
     },
 
     _escHtml(str) {

@@ -304,21 +304,21 @@ class MetricsManager:
                 pdf.set_font("helvetica", "", 8)
                 for d in devices_list[:30]:
                     row = table.row()
-                    row.cell(d.ip or "—")
+                    row.cell(d.ip or "-")
                     row.cell(d.mac)
-                    row.cell(str(d.hostname)[:20] or "—")
+                    row.cell(str(d.hostname)[:20] or "-")
                     
                     vos = []
                     if d.vendor: vos.append(d.vendor[:15])
                     if d.os: vos.append(d.os[:15])
-                    row.cell(" / ".join(vos) or "—")
+                    row.cell(" / ".join(vos) or "-")
                     
                     if d.ports:
                         p_str = ", ".join(str(p.port) for p in d.ports[:8])
                         if len(d.ports) > 8: p_str += "..."
                         row.cell(p_str)
                     else:
-                        row.cell("—")
+                        row.cell("-")
             pdf.ln(8)
 
         # ── Protocol Distribution ──
@@ -478,7 +478,7 @@ class MetricsManager:
                     row.cell(str(sw.get("platform", ""))[:35])
                     row.cell(str(sw.get("local_port", ""))[:25])
                     nv = sw.get("native_vlan")
-                    row.cell(str(nv) if nv is not None else "—")
+                    row.cell(str(nv) if nv is not None else "-")
                     row.cell(str(sw.get("source_protocol", "")).upper())
             pdf.ln(8)
 
@@ -505,9 +505,9 @@ class MetricsManager:
                     row = table.row()
                     row.cell(str(v.get("vlan_id", "")))
                     row.cell(str(v.get("name", ""))[:25])
-                    row.cell(str(v.get("subnet", "")) or "—")
+                    row.cell(str(v.get("subnet", "")) or "-")
                     row.cell(str(v.get("source_protocol", "")).upper())
-                    row.cell(str(v.get("source_switch", ""))[:20] or "—")
+                    row.cell(str(v.get("source_switch", ""))[:20] or "-")
                     row.cell("Yes" if v.get("is_native") else "")
             pdf.ln(8)
 
@@ -533,13 +533,13 @@ class MetricsManager:
                 for s in subnets[:25]:
                     row = table.row()
                     row.cell(str(s.get("cidr", "")))
-                    row.cell(str(s.get("gateway", "")) or "—")
+                    row.cell(str(s.get("gateway", "")) or "-")
                     vid = s.get("vlan_id")
-                    row.cell(str(vid) if vid is not None else "—")
+                    row.cell(str(vid) if vid is not None else "-")
                     dc = s.get("device_count", 0)
-                    row.cell(str(dc) if dc else "—")
+                    row.cell(str(dc) if dc else "-")
                     row.cell(str(s.get("source_protocol", "")).upper()[:20])
-                    row.cell(str(s.get("source_router", ""))[:20] or "—")
+                    row.cell(str(s.get("source_router", ""))[:20] or "-")
             pdf.ln(8)
 
         # Routing Table
@@ -564,12 +564,12 @@ class MetricsManager:
                 for r in routes[:30]:
                     row = table.row()
                     row.cell(str(r.get("destination", "")))
-                    row.cell(str(r.get("next_hop", "")) or "—")
+                    row.cell(str(r.get("next_hop", "")) or "-")
                     row.cell(str(r.get("metric", 0)))
                     row.cell(str(r.get("protocol", "")).upper())
-                    row.cell(str(r.get("advertising_router", ""))[:20] or "—")
+                    row.cell(str(r.get("advertising_router", ""))[:20] or "-")
                     area_as = r.get("area", "") or (str(r.get("as_number", "")) if r.get("as_number") else "")
-                    row.cell(str(area_as) or "—")
+                    row.cell(str(area_as) or "-")
             pdf.ln(8)
 
         # ── Active Interception (MITM) Summary ──

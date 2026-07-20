@@ -334,6 +334,18 @@ class VLANDiscovery:
                         is_native=True,
                     )
 
+                if mgmt_ip and mgmt_ip != "0.0.0.0":
+                    try:
+                        net = ipaddress.IPv4Network(f"{mgmt_ip}/24", strict=False)
+                        self._register_subnet(
+                            cidr=str(net),
+                            gateway=mgmt_ip,
+                            source_protocol="cdp",
+                            source_router=device_id
+                        )
+                    except Exception:
+                        pass
+
                 print(f"[VLANDiscovery] CDP: Switch '{device_id}' ({platform}), Port: {local_port}, Native VLAN: {native_vlan}, Mgmt IP: {mgmt_ip}")
 
         except Exception as e:
@@ -453,6 +465,18 @@ class VLANDiscovery:
                         source_switch=device_id,
                         is_native=True,
                     )
+
+                if mgmt_ip and mgmt_ip != "0.0.0.0":
+                    try:
+                        net = ipaddress.IPv4Network(f"{mgmt_ip}/24", strict=False)
+                        self._register_subnet(
+                            cidr=str(net),
+                            gateway=mgmt_ip,
+                            source_protocol="lldp",
+                            source_router=device_id
+                        )
+                    except Exception:
+                        pass
 
                 print(f"[VLANDiscovery] LLDP: Switch '{device_id}', Port: {port_desc}, VLAN: {vlan_id}, Mgmt IP: {mgmt_ip}")
 
@@ -870,6 +894,25 @@ class VLANDiscovery:
                     metric=metric,
                 )
 
+        # Register gateway and DHCP server in central inventory
+        try:
+            import api
+            if hasattr(api, 'inventory') and api.inventory:
+                if gateway and gateway != "0.0.0.0":
+                    api.inventory.upsert_device({
+                        "ip": gateway,
+                        "hostname": f"Gateway-{gateway}",
+                        "discovery_methods": [f"VLAN_SUBNET_{source_protocol.upper()}" if source_protocol else "VLAN_SUBNET"]
+                    })
+                if dhcp_server and dhcp_server != "0.0.0.0":
+                    api.inventory.upsert_device({
+                        "ip": dhcp_server,
+                        "hostname": f"DHCP-{dhcp_server}",
+                        "discovery_methods": ["VLAN_DHCP"]
+                    })
+        except Exception:
+            pass
+
     def _register_switch(
         self,
         device_id: str,
@@ -929,6 +972,21 @@ class VLANDiscovery:
             except Exception:
                 pass
 
+        # Register switch/router in central inventory
+        try:
+            import api
+            if hasattr(api, 'inventory') and api.inventory and management_ip and management_ip != "0.0.0.0":
+                api.inventory.upsert_device({
+                    "ip": management_ip,
+                    "mac": source_mac.lower() if source_mac else "",
+                    "hostname": device_id,
+                    "vendor": platform,
+                    "os": software_version,
+                    "discovery_methods": [f"VLAN_{source_protocol.upper()}" if source_protocol else "VLAN_DISCOVERY"]
+                })
+        except Exception:
+            pass
+
     def _register_route(
         self,
         destination: str,
@@ -957,6 +1015,23 @@ class VLANDiscovery:
                     area=area,
                     as_number=as_number,
                 )
+
+        # Register routing nodes in central inventory
+        try:
+            import api
+            if hasattr(api, 'inventory') and api.inventory:
+                if advertising_router and advertising_router != "0.0.0.0":
+                    api.inventory.upsert_device({
+                        "ip": advertising_router,
+                        "discovery_methods": [f"VLAN_ROUTE_{protocol.upper()}" if protocol else "VLAN_ROUTE"]
+                    })
+                if next_hop and next_hop != "0.0.0.0":
+                    api.inventory.upsert_device({
+                        "ip": next_hop,
+                        "discovery_methods": [f"VLAN_ROUTE_{protocol.upper()}" if protocol else "VLAN_ROUTE"]
+                    })
+        except Exception:
+            pass
 
     def _track_ip_for_subnet(self, ip_str: str, context: str = "") -> None:
         """Track an observed IP to eventually infer subnets."""
