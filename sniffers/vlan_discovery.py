@@ -73,6 +73,41 @@ class VLANDiscovery:
         )
         self._thread.start()
 
+        # Start traceroute discovery in parallel
+        threading.Thread(
+            target=self._run_traceroute_discovery,
+            daemon=True,
+        ).start()
+
+    def _run_traceroute_discovery(self) -> None:
+        """Run a background traceroute to map local routers and subnets."""
+        try:
+            from scapy.all import traceroute
+            res, _ = traceroute("8.8.8.8", maxttl=10, timeout=1, verbose=0)
+            for _, rcv in res:
+                ip_str = rcv.src
+                try:
+                    ip = ipaddress.IPv4Address(ip_str)
+                    if ip.is_private:
+                        net = ipaddress.IPv4Network(f"{ip_str}/24", strict=False)
+                        self._register_subnet(
+                            cidr=str(net),
+                            gateway=ip_str,
+                            source_protocol="traceroute",
+                            source_router="traceroute_scan"
+                        )
+                        import api
+                        if hasattr(api, 'inventory') and api.inventory:
+                            api.inventory.upsert_device({
+                                "ip": ip_str,
+                                "hostname": f"Traceroute-Hop-{ip_str}",
+                                "discovery_methods": ["TRACEROUTE"]
+                            })
+                except Exception:
+                    continue
+        except Exception as e:
+            print(f"[VLANDiscovery] Traceroute failed: {e}")
+
     def stop(self) -> dict:
         """Stop the VLAN discovery sniffer and return summary."""
         self._running = False

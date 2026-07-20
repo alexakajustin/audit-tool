@@ -49,7 +49,24 @@ def start_scan():
     is_wifi_only = len(scanners) == 1 and scanners[0] == "wifi_scanner"
     
     if not subnet and not is_wifi_only:
-        return jsonify({"error": "subnet is required"}), 400
+        # Auto-resolve subnets from interfaces and VLAN discovery
+        subnets_set = set()
+        
+        # Local interfaces
+        interfaces = get_interfaces()
+        for i in interfaces:
+            if i.subnet:
+                subnets_set.add(i.subnet)
+                
+        # VLAN / Traceroute discovery subnets
+        if hasattr(api, 'vlan_discovery') and api.vlan_discovery:
+            for s in api.vlan_discovery.get_subnets():
+                subnets_set.add(s["cidr"])
+                
+        if not subnets_set:
+            return jsonify({"error": "Could not auto-determine any subnets. Please check network connectivity."}), 400
+            
+        subnet = " ".join(list(subnets_set))
 
     target = ScanTarget(
         subnet=subnet,

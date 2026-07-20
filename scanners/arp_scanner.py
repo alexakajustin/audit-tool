@@ -80,31 +80,30 @@ class ArpScanner(BaseScanner):
             if target.interface:
                 conf.iface = target.interface
 
-            # Build ARP request: broadcast Ether + ARP who-has
-            arp_request = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=target.subnet)
+            targets = target.subnet.split()
+            for subnet in targets:
+                arp_request = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=subnet)
+                answered, _ = srp(arp_request, timeout=timeout, retry=1, verbose=0)
 
-            # Send and receive
-            answered, _ = srp(arp_request, timeout=timeout, retry=1, verbose=0)
+                for sent, received in answered:
+                    ip = received.psrc
+                    mac = received.hwsrc.upper()
 
-            for sent, received in answered:
-                ip = received.psrc
-                mac = received.hwsrc.upper()
+                    # Calculate response time
+                    resp_time = (received.time - sent.sent_time) * 1000  # ms
 
-                # Calculate response time
-                resp_time = (received.time - sent.sent_time) * 1000  # ms
+                    device = Device(
+                        mac=mac,
+                        ip=ip,
+                        vendor=lookup_vendor(mac),
+                        status=DeviceStatus.ONLINE,
+                        discovery_methods=[self.name],
+                        response_time_ms=round(resp_time, 2),
+                    )
 
-                device = Device(
-                    mac=mac,
-                    ip=ip,
-                    vendor=lookup_vendor(mac),
-                    status=DeviceStatus.ONLINE,
-                    discovery_methods=[self.name],
-                    response_time_ms=round(resp_time, 2),
-                )
-
-                result.devices.append(device)
-                if on_device_found:
-                    on_device_found(device)
+                    result.devices.append(device)
+                    if on_device_found:
+                        on_device_found(device)
 
             result.state = ScanState.COMPLETE
 

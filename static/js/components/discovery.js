@@ -47,12 +47,6 @@ const DiscoveryPage = {
                             </select>
                         </div>
 
-                        <div class="form-group">
-                            <label class="form-label">Target Subnet</label>
-                            <input type="text" id="disc-subnet" class="form-control"
-                                   placeholder="e.g. 192.168.1.0/24" />
-                        </div>
-
                         <div class="form-group scan-config-full">
                             <label class="form-label">Scanners</label>
                             <div id="disc-scanners" class="scanner-chips">
@@ -199,7 +193,6 @@ const DiscoveryPage = {
         try {
             const data = await API.getInterfaces();
             const select = document.getElementById('disc-interface');
-            const subnetInput = document.getElementById('disc-subnet');
 
             select.innerHTML = data.interfaces.map(iface => {
                 const ipText = iface.ip ? `${iface.ip} (${iface.subnet})` : 'Unconnected (e.g. Wi-Fi AP Scan)';
@@ -209,20 +202,6 @@ const DiscoveryPage = {
             }).join('');
 
             this._interfaces = data.interfaces;
-
-            // Auto-fill subnet from recommended interface
-            if (data.recommended) {
-                subnetInput.value = data.recommended.subnet;
-            }
-
-            // Update subnet when interface changes
-            select.addEventListener('change', () => {
-                const iface = this._interfaces.find(i => i.name === select.value);
-                const isWifiOnly = this._selectedScanners.size === 1 && this._selectedScanners.has('wifi_scanner');
-                if (iface && !isWifiOnly) {
-                    subnetInput.value = iface.subnet || '';
-                }
-            });
         } catch (e) {
             App.toast('Failed to load interfaces: ' + e.message, 'error');
         }
@@ -275,41 +254,17 @@ const DiscoveryPage = {
         const chip = document.querySelector(`[data-scanner="${name}"]`);
         if (chip) chip.classList.toggle('selected');
 
-        // Check if only wifi_scanner is selected
-        const subnetInput = document.getElementById('disc-subnet');
-        const isWifiOnly = this._selectedScanners.size === 1 && this._selectedScanners.has('wifi_scanner');
-        if (subnetInput) {
-            if (isWifiOnly) {
-                subnetInput.disabled = true;
-                subnetInput.placeholder = "No subnet target required for Wi-Fi Scan";
-                subnetInput.value = "";
-            } else {
-                subnetInput.disabled = false;
-                subnetInput.placeholder = "e.g. 192.168.1.0/24";
-                // Restore recommended subnet if available
-                const select = document.getElementById('disc-interface');
-                const iface = this._interfaces.find(i => i.name === select.value);
-                if (iface) subnetInput.value = iface.subnet;
-            }
-        }
+        // No subnet logic needed
     },
 
     async startScan() {
-        const isWifiOnly = this._selectedScanners.size === 1 && this._selectedScanners.has('wifi_scanner');
-        const subnet = document.getElementById('disc-subnet').value.trim();
-        
-        if (!subnet && !isWifiOnly) {
-            App.toast('Please enter a target subnet', 'warning');
-            return;
-        }
-
         if (this._selectedScanners.size === 0) {
             App.toast('Please select at least one scanner', 'warning');
             return;
         }
 
         const config = {
-            subnet,
+            subnet: "", // Let the backend auto-determine the target subnets!
             interface: document.getElementById('disc-interface').value,
             scanners: [...this._selectedScanners],
             options: {
