@@ -57,6 +57,14 @@ def build():
         "--hidden-import", "scapy.layers.l2",
         "--hidden-import", "scapy.layers.dhcp",
         "--hidden-import", "scapy.layers.dns",
+        "--hidden-import", "scapy.contrib.cdp",
+        "--hidden-import", "scapy.layers.cdp",
+        "--hidden-import", "scapy.contrib.lldp",
+        "--hidden-import", "scapy.layers.lldp",
+        "--hidden-import", "scapy.contrib.ospf",
+        "--hidden-import", "scapy.layers.ospf",
+        "--hidden-import", "scapy.contrib.eigrp",
+        "--hidden-import", "scapy.layers.eigrp",
         
         # Flask/SocketIO dynamic imports
         "--hidden-import", "engineio.async_drivers.threading",
