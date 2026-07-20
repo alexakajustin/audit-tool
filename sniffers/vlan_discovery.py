@@ -17,7 +17,7 @@ import threading
 import time
 from typing import Callable, Optional
 
-from core.models import VLANInfo, SubnetInfo, SwitchInfo, RoutingEntry
+from core.models import VLANInfo, SubnetInfo, SwitchInfo, RoutingEntry, Device, DeviceStatus
 
 
 class VLANDiscovery:
@@ -80,33 +80,152 @@ class VLANDiscovery:
         ).start()
 
     def _run_traceroute_discovery(self) -> None:
-        """Run a background traceroute to map local routers and subnets."""
+        """Use native OS commands to discover routers, subnets, and cross-subnet devices."""
+        import subprocess
+        import re
+
+        print("[VLANDiscovery] Running OS-level network intelligence (tracert + route + arp) ...")
+
+        # ── 1. Windows 'tracert' to discover upstream routers ─────────
         try:
-            from scapy.all import traceroute
-            res, _ = traceroute("8.8.8.8", maxttl=10, timeout=1, verbose=0)
-            for _, rcv in res:
-                ip_str = rcv.src
+            proc = subprocess.run(
+                ["tracert", "-d", "-w", "500", "-h", "10", "8.8.8.8"],
+                capture_output=True, text=True, timeout=30,
+                creationflags=subprocess.CREATE_NO_WINDOW
+                if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+            )
+            for line in proc.stdout.splitlines():
+                match = re.search(r"(\d+\.\d+\.\d+\.\d+)\s*$", line.strip())
+                if match:
+                    ip_str = match.group(1)
+                    try:
+                        ip = ipaddress.IPv4Address(ip_str)
+                        if ip.is_private:
+                            net = ipaddress.IPv4Network(f"{ip_str}/24", strict=False)
+                            self._register_subnet(
+                                cidr=str(net),
+                                gateway=ip_str,
+                                source_protocol="traceroute",
+                                source_router="tracert"
+                            )
+                            self._inject_device_to_inventory(
+                                ip=ip_str,
+                                hostname=f"Router-{ip_str}",
+                                method="TRACEROUTE"
+                            )
+                            print(f"[VLANDiscovery]   tracert hop: {ip_str} -> subnet {net}")
+                    except Exception:
+                        continue
+        except Exception as e:
+            print(f"[VLANDiscovery] tracert failed: {e}")
+
+        # ── 2. Windows 'route print' to discover all known subnets ────
+        try:
+            proc = subprocess.run(
+                ["route", "print"],
+                capture_output=True, text=True, timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW
+                if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+            )
+            # Parse IPv4 route table lines like:
+            #   192.168.99.0    255.255.255.0    192.168.88.1    192.168.88.87    30
+            route_re = re.compile(
+                r"^\s*(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)"
+            )
+            for line in proc.stdout.splitlines():
+                m = route_re.match(line)
+                if not m:
+                    continue
+                dest, mask, gw = m.group(1), m.group(2), m.group(3)
+                # Skip default route, loopback, broadcast, multicast
+                if dest in ("0.0.0.0", "127.0.0.0", "127.0.0.1", "224.0.0.0", "255.255.255.255"):
+                    continue
+                if mask == "255.255.255.255":  # host routes
+                    continue
                 try:
-                    ip = ipaddress.IPv4Address(ip_str)
-                    if ip.is_private:
-                        net = ipaddress.IPv4Network(f"{ip_str}/24", strict=False)
+                    net_dest = ipaddress.IPv4Address(dest)
+                    gw_addr = ipaddress.IPv4Address(gw)
+                    if net_dest.is_private and not net_dest.is_loopback:
+                        cidr = str(ipaddress.IPv4Network(f"{dest}/{mask}", strict=False))
+                        gw_str = str(gw) if gw_addr.is_private and str(gw) != "0.0.0.0" else ""
                         self._register_subnet(
-                            cidr=str(net),
-                            gateway=ip_str,
-                            source_protocol="traceroute",
-                            source_router="traceroute_scan"
+                            cidr=cidr,
+                            gateway=gw_str,
+                            source_protocol="route_table",
+                            source_router="local_os"
                         )
-                        import api
-                        if hasattr(api, 'inventory') and api.inventory:
-                            api.inventory.upsert_device({
-                                "ip": ip_str,
-                                "hostname": f"Traceroute-Hop-{ip_str}",
-                                "discovery_methods": ["TRACEROUTE"]
-                            })
+                        if gw_str:
+                            self._inject_device_to_inventory(
+                                ip=gw_str,
+                                hostname=f"Gateway-{gw_str}",
+                                method="ROUTE_TABLE"
+                            )
+                        print(f"[VLANDiscovery]   route: {cidr} via {gw_str or 'direct'}")
                 except Exception:
                     continue
         except Exception as e:
-            print(f"[VLANDiscovery] Traceroute failed: {e}")
+            print(f"[VLANDiscovery] route print failed: {e}")
+
+        # ── 3. Full 'arp -a' to discover ALL cross-subnet devices ─────
+        try:
+            proc = subprocess.run(
+                ["arp", "-a"],
+                capture_output=True, text=True, timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW
+                if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+            )
+            arp_re = re.compile(
+                r"(\d+\.\d+\.\d+\.\d+)\s+"
+                r"([0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}"
+                r"[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2}[:\-][0-9a-fA-F]{2})"
+            )
+            for line in proc.stdout.splitlines():
+                m = arp_re.search(line)
+                if not m:
+                    continue
+                ip_str = m.group(1)
+                mac_str = m.group(2).replace("-", ":").upper()
+                if mac_str == "FF:FF:FF:FF:FF:FF":
+                    continue
+                try:
+                    ip = ipaddress.IPv4Address(ip_str)
+                    if ip.is_private and not ip.is_loopback:
+                        # Register its /24 subnet
+                        net = ipaddress.IPv4Network(f"{ip_str}/24", strict=False)
+                        self._register_subnet(
+                            cidr=str(net),
+                            source_protocol="arp_table",
+                        )
+                        # Inject into inventory
+                        self._inject_device_to_inventory(
+                            ip=ip_str,
+                            mac=mac_str,
+                            method="ARP_TABLE_GLOBAL"
+                        )
+                except Exception:
+                    continue
+        except Exception as e:
+            print(f"[VLANDiscovery] arp -a failed: {e}")
+
+        print(f"[VLANDiscovery] OS-level discovery complete. Known subnets: {len(self._subnets)}")
+
+    def _inject_device_to_inventory(self, ip: str, mac: str = "", hostname: str = "", method: str = "") -> None:
+        """Helper to inject a discovered device into the central inventory."""
+        try:
+            import api
+            if hasattr(api, 'inventory') and api.inventory:
+                from network.mac_lookup import lookup_vendor
+                actual_mac = mac if mac else f"ROUTED-{ip}"
+                api.inventory.upsert_device(Device(
+                    mac=actual_mac,
+                    ip=ip,
+                    hostname=hostname,
+                    vendor=lookup_vendor(actual_mac) if mac else "",
+                    status=DeviceStatus.ONLINE if mac else DeviceStatus.UNKNOWN,
+                    discovery_methods=[method] if method else ["VLAN_DISCOVERY"]
+                ))
+        except Exception:
+            pass
 
     def stop(self) -> dict:
         """Stop the VLAN discovery sniffer and return summary."""
@@ -934,17 +1053,19 @@ class VLANDiscovery:
             import api
             if hasattr(api, 'inventory') and api.inventory:
                 if gateway and gateway != "0.0.0.0":
-                    api.inventory.upsert_device({
-                        "ip": gateway,
-                        "hostname": f"Gateway-{gateway}",
-                        "discovery_methods": [f"VLAN_SUBNET_{source_protocol.upper()}" if source_protocol else "VLAN_SUBNET"]
-                    })
+                    api.inventory.upsert_device(Device(
+                        mac=f"ROUTED-{gateway}",
+                        ip=gateway,
+                        hostname=f"Gateway-{gateway}",
+                        discovery_methods=[f"VLAN_SUBNET_{source_protocol.upper()}" if source_protocol else "VLAN_SUBNET"]
+                    ))
                 if dhcp_server and dhcp_server != "0.0.0.0":
-                    api.inventory.upsert_device({
-                        "ip": dhcp_server,
-                        "hostname": f"DHCP-{dhcp_server}",
-                        "discovery_methods": ["VLAN_DHCP"]
-                    })
+                    api.inventory.upsert_device(Device(
+                        mac=f"ROUTED-{dhcp_server}",
+                        ip=dhcp_server,
+                        hostname=f"DHCP-{dhcp_server}",
+                        discovery_methods=["VLAN_DHCP"]
+                    ))
         except Exception:
             pass
 
@@ -1011,14 +1132,14 @@ class VLANDiscovery:
         try:
             import api
             if hasattr(api, 'inventory') and api.inventory and management_ip and management_ip != "0.0.0.0":
-                api.inventory.upsert_device({
-                    "ip": management_ip,
-                    "mac": source_mac.lower() if source_mac else "",
-                    "hostname": device_id,
-                    "vendor": platform,
-                    "os": software_version,
-                    "discovery_methods": [f"VLAN_{source_protocol.upper()}" if source_protocol else "VLAN_DISCOVERY"]
-                })
+                api.inventory.upsert_device(Device(
+                    mac=source_mac.lower() if source_mac else f"ROUTED-{management_ip}",
+                    ip=management_ip,
+                    hostname=device_id,
+                    vendor=platform,
+                    os=software_version,
+                    discovery_methods=[f"VLAN_{source_protocol.upper()}" if source_protocol else "VLAN_DISCOVERY"]
+                ))
         except Exception:
             pass
 
@@ -1056,15 +1177,17 @@ class VLANDiscovery:
             import api
             if hasattr(api, 'inventory') and api.inventory:
                 if advertising_router and advertising_router != "0.0.0.0":
-                    api.inventory.upsert_device({
-                        "ip": advertising_router,
-                        "discovery_methods": [f"VLAN_ROUTE_{protocol.upper()}" if protocol else "VLAN_ROUTE"]
-                    })
+                    api.inventory.upsert_device(Device(
+                        mac=f"ROUTED-{advertising_router}",
+                        ip=advertising_router,
+                        discovery_methods=[f"VLAN_ROUTE_{protocol.upper()}" if protocol else "VLAN_ROUTE"]
+                    ))
                 if next_hop and next_hop != "0.0.0.0":
-                    api.inventory.upsert_device({
-                        "ip": next_hop,
-                        "discovery_methods": [f"VLAN_ROUTE_{protocol.upper()}" if protocol else "VLAN_ROUTE"]
-                    })
+                    api.inventory.upsert_device(Device(
+                        mac=f"ROUTED-{next_hop}",
+                        ip=next_hop,
+                        discovery_methods=[f"VLAN_ROUTE_{protocol.upper()}" if protocol else "VLAN_ROUTE"]
+                    ))
         except Exception:
             pass
 

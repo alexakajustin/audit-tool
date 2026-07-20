@@ -231,8 +231,7 @@ const DashboardPage = {
                 },
                 groups: {
                     internet: {
-                        shape: 'icon',
-                        icon: { face: '"FontAwesome"', code: '\uf0ac', size: 50, color: '#ff3b5c' }, // requires fontawesome, fallback to dot
+                        shape: 'star',
                         color: { background: '#ff3b5c', border: '#ff3b5c' },
                         size: 30,
                         font: { color: '#ff3b5c', size: 16, bold: true }

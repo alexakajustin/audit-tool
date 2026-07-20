@@ -93,13 +93,12 @@ def get_topology():
     # 4. Add Endpoints (PCs, Cameras, etc) from Inventory
     devices = []
     if hasattr(api, 'inventory') and api.inventory:
-        data = api.inventory.get_all()
-        devices = data.get("devices", [])
+        devices = api.inventory.get_all()
         
     for dev in devices:
-        mac = dev.get("mac")
-        ip = dev.get("ip")
-        hostname = dev.get("hostname") or ip or mac
+        mac = dev.mac
+        ip = dev.ip
+        hostname = dev.hostname or ip or mac
         
         # Skip if this IP is already a router (traceroute hop or gateway)
         if ip in node_ids:
@@ -112,13 +111,13 @@ def get_topology():
             
         group = "endpoint"
         # Heuristics for icons
-        vendor = (dev.get("vendor") or "").lower()
+        vendor = (dev.vendor or "").lower()
         if "apple" in vendor or "samsung" in vendor:
             group = "mobile"
         elif "hikvision" in vendor or "dahua" in vendor:
             group = "camera"
             
-        title = f"IP: {ip}\nMAC: {mac}\nVendor: {dev.get('vendor')}"
+        title = f"IP: {ip}\nMAC: {mac}\nVendor: {dev.vendor}"
         add_node(mac, label, group, title)
         
         # Connect endpoint to its Subnet
