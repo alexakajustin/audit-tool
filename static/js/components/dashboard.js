@@ -226,31 +226,41 @@ const DashboardPage = {
                 },
                 edges: {
                     width: 2,
-                    color: { color: 'rgba(255, 255, 255, 0.1)', highlight: '#00f0ff' },
-                    smooth: { type: 'continuous' }
+                    color: { color: 'rgba(255, 255, 255, 0.15)', highlight: '#00f0ff' },
+                    smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.4 },
+                    arrows: { to: { enabled: false } }
                 },
                 groups: {
                     internet: {
                         shape: 'star',
                         color: { background: '#ff3b5c', border: '#ff3b5c' },
                         size: 30,
-                        font: { color: '#ff3b5c', size: 16, bold: true }
+                        font: { color: '#ff3b5c', size: 14, bold: true }
                     },
                     router: {
                         shape: 'triangle',
                         color: { background: '#1a1f2e', border: '#a55eea' },
-                        size: 20
+                        size: 22,
+                        font: { color: '#a55eea' }
                     },
                     switch: {
                         shape: 'square',
                         color: { background: '#1a1f2e', border: '#00f0ff' },
-                        size: 20
+                        size: 20,
+                        font: { color: '#00f0ff' }
                     },
                     subnet: {
-                        shape: 'cloud',
-                        color: { background: 'rgba(255,255,255,0.05)', border: 'rgba(255,255,255,0.2)' },
-                        size: 25,
-                        font: { color: '#fff' }
+                        shape: 'ellipse',
+                        color: { background: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.25)' },
+                        size: 20,
+                        font: { color: '#fff', size: 11 }
+                    },
+                    my_pc: {
+                        shape: 'star',
+                        color: { background: '#00f0ff', border: '#00f0ff' },
+                        size: 28,
+                        font: { color: '#00f0ff', size: 14, bold: true },
+                        shadow: { enabled: true, color: 'rgba(0,240,255,0.5)', size: 20, x: 0, y: 0 }
                     },
                     endpoint: {
                         color: { background: '#1a1f2e', border: '#00ff88' },
@@ -264,23 +274,28 @@ const DashboardPage = {
                         color: { background: '#1a1f2e', border: '#ff9f43' },
                     }
                 },
+                layout: {
+                    hierarchical: {
+                        enabled: true,
+                        direction: 'LR',
+                        sortMethod: 'directed',
+                        levelSeparation: 180,
+                        nodeSpacing: 80,
+                        treeSpacing: 100,
+                        blockShifting: true,
+                        edgeMinimization: true,
+                        parentCentralization: true
+                    }
+                },
                 physics: {
-                    forceAtlas2Based: {
-                        gravitationalConstant: -50,
-                        centralGravity: 0.01,
-                        springLength: 100,
-                        springConstant: 0.08
-                    },
-                    maxVelocity: 50,
-                    solver: 'forceAtlas2Based',
-                    timestep: 0.35,
-                    stabilization: { iterations: 150 }
+                    enabled: false
                 },
                 interaction: {
                     hover: true,
                     tooltipDelay: 200,
                     zoomView: true,
-                    dragView: true
+                    dragView: true,
+                    dragNodes: true
                 }
             };
 

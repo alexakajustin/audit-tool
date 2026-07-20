@@ -38,6 +38,7 @@ class VLANDiscovery:
         self._switches: dict[str, SwitchInfo] = {}             # device_id -> SwitchInfo
         self._routes: dict[str, RoutingEntry] = {}             # "dest|nexthop" -> RoutingEntry
         self._observed_ips: dict[str, set[str]] = {}           # Subnet prefix -> set of IPs
+        self._traceroute_hops: list[str] = []                  # Ordered list of upstream router IPs
 
         # Protocol packet counters
         self._protocol_counts: dict[str, int] = {}
@@ -94,13 +95,15 @@ class VLANDiscovery:
                 creationflags=subprocess.CREATE_NO_WINDOW
                 if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
             )
+            hops = []
             for line in proc.stdout.splitlines():
-                match = re.search(r"(\d+\.\d+\.\d+\.\d+)\s*$", line.strip())
+                match = re.search(r"^\s*\d+\s+.*?(\d+\.\d+\.\d+\.\d+)\s*$", line.strip())
                 if match:
                     ip_str = match.group(1)
                     try:
                         ip = ipaddress.IPv4Address(ip_str)
                         if ip.is_private:
+                            hops.append(ip_str)
                             net = ipaddress.IPv4Network(f"{ip_str}/24", strict=False)
                             self._register_subnet(
                                 cidr=str(net),
@@ -116,6 +119,10 @@ class VLANDiscovery:
                             print(f"[VLANDiscovery]   tracert hop: {ip_str} -> subnet {net}")
                     except Exception:
                         continue
+            
+            with self._lock:
+                self._traceroute_hops = hops
+                
         except Exception as e:
             print(f"[VLANDiscovery] tracert failed: {e}")
 
@@ -263,6 +270,10 @@ class VLANDiscovery:
     def get_routes(self) -> list[dict]:
         with self._lock:
             return [r.to_dict() for r in self._routes.values()]
+
+    def get_traceroute_hops(self) -> list[str]:
+        with self._lock:
+            return list(self._traceroute_hops)
 
     def get_full_intelligence(self) -> dict:
         """Get all discovered intelligence in one response."""
