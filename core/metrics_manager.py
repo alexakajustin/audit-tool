@@ -104,6 +104,26 @@ class MetricsManager:
         except Exception as e:
             print(f"[MetricsManager] Warning: failed to capture VLAN intelligence ({e})")
 
+        # Capture Inventory Snapshot
+        self.inventory_stats = {}
+        self.devices_list = []
+        try:
+            import api
+            if hasattr(api, 'inventory') and api.inventory:
+                self.inventory_stats = api.inventory.get_stats()
+                self.devices_list = api.inventory.get_all(sort_by="last_seen", sort_order="desc")
+        except Exception as e:
+            print(f"[MetricsManager] Warning: failed to capture inventory ({e})")
+
+        # Capture MITM Snapshot
+        self.mitm_status = {}
+        try:
+            import api
+            if hasattr(api, 'arp_spoofer') and api.arp_spoofer:
+                self.mitm_status = api.arp_spoofer.get_status()
+        except Exception as e:
+            print(f"[MetricsManager] Warning: failed to capture MITM status ({e})")
+
         # Build PDF file path
         os.makedirs(export_dir, exist_ok=True)
         filename = f"security_report_{int(time.time())}.pdf"
@@ -223,6 +243,83 @@ class MetricsManager:
         pdf.cell(45, 7, " Security Alerts Triggered", border="B")
         pdf.cell(50, 7, f" {len(self.new_alerts)} alerts", border="B", ln=True)
         pdf.ln(8)
+
+        # ── Asset & Inventory Overview ──
+        inv_stats = getattr(self, "inventory_stats", {})
+        devices_list = getattr(self, "devices_list", [])
+        if inv_stats and devices_list:
+            pdf.set_font("helvetica", "B", 12)
+            pdf.set_text_color(*c_dark_navy)
+            pdf.cell(0, 8, "Asset & Device Inventory Overview", ln=True)
+            pdf.ln(2)
+            
+            pdf.set_font("helvetica", "B", 9)
+            pdf.set_fill_color(240, 243, 248)
+            pdf.set_text_color(*c_dark_navy)
+            pdf.cell(65, 7, " Metric", border="B", fill=True)
+            pdf.cell(125, 7, " Value", border="B", fill=True, ln=True)
+            
+            pdf.set_font("helvetica", "", 9)
+            pdf.set_text_color(*c_text_dark)
+            
+            total_devs = inv_stats.get("total_devices", 0)
+            online_devs = inv_stats.get("online_devices", 0)
+            offline_devs = inv_stats.get("offline_devices", 0)
+            total_ports = inv_stats.get("total_open_ports", 0)
+            
+            pdf.cell(65, 7, " Total Devices Discovered", border="B")
+            pdf.cell(125, 7, f" {total_devs} (Online: {online_devs} / Offline: {offline_devs})", border="B", ln=True)
+            
+            pdf.cell(65, 7, " Total Open Ports Detected", border="B")
+            pdf.cell(125, 7, f" {total_ports}", border="B", ln=True)
+            
+            os_dist = inv_stats.get("os_distribution", {})
+            if os_dist:
+                os_str = ", ".join(f"{k} ({v})" for k, v in list(os_dist.items())[:5])
+                pdf.cell(65, 7, " Top Operating Systems", border="B")
+                pdf.cell(125, 7, f" {os_str}", border="B", ln=True)
+                
+            vendor_dist = inv_stats.get("vendor_distribution", {})
+            if vendor_dist:
+                v_str = ", ".join(f"{k} ({v})" for k, v in list(vendor_dist.items())[:5])
+                pdf.cell(65, 7, " Top Hardware Vendors", border="B")
+                pdf.cell(125, 7, f" {v_str}", border="B", ln=True)
+            pdf.ln(8)
+
+            # ── Detailed Device List ──
+            pdf.set_font("helvetica", "B", 12)
+            pdf.set_text_color(*c_dark_navy)
+            pdf.cell(0, 8, "Discovered Network Devices (Top 30 Recently Active)", ln=True)
+            pdf.ln(2)
+            
+            with pdf.table(borders_layout="HORIZONTAL_LINES", text_align="LEFT", col_widths=(25, 35, 35, 45, 40)) as table:
+                pdf.set_font("helvetica", "B", 8)
+                row = table.row()
+                row.cell("IP Address")
+                row.cell("MAC Address")
+                row.cell("Hostname")
+                row.cell("Vendor / OS")
+                row.cell("Open Ports")
+                
+                pdf.set_font("helvetica", "", 8)
+                for d in devices_list[:30]:
+                    row = table.row()
+                    row.cell(d.ip or "—")
+                    row.cell(d.mac)
+                    row.cell(str(d.hostname)[:20] or "—")
+                    
+                    vos = []
+                    if d.vendor: vos.append(d.vendor[:15])
+                    if d.os: vos.append(d.os[:15])
+                    row.cell(" / ".join(vos) or "—")
+                    
+                    if d.ports:
+                        p_str = ", ".join(str(p.port) for p in d.ports[:8])
+                        if len(d.ports) > 8: p_str += "..."
+                        row.cell(p_str)
+                    else:
+                        row.cell("—")
+            pdf.ln(8)
 
         # ── Protocol Distribution ──
         protocols = raw_stats.get("protocols", {})
@@ -475,6 +572,34 @@ class MetricsManager:
                     row.cell(str(area_as) or "—")
             pdf.ln(8)
 
+        # ── Active Interception (MITM) Summary ──
+        mitm_status = getattr(self, "mitm_status", {})
+        if mitm_status and mitm_status.get("packets_sent", 0) > 0:
+            pdf.set_font("helvetica", "B", 12)
+            pdf.set_text_color(*c_dark_navy)
+            pdf.cell(0, 8, "Active Network Interception (MITM Spoofing) Summary", ln=True)
+            pdf.set_font("helvetica", "I", 8.5)
+            pdf.set_text_color(*c_muted)
+            pdf.cell(0, 5, "NOTE: The tool actively intercepted traffic via ARP spoofing to enhance traffic analysis.", ln=True)
+            pdf.ln(4)
+            
+            pdf.set_font("helvetica", "B", 9)
+            pdf.set_fill_color(240, 243, 248)
+            pdf.set_text_color(*c_dark_navy)
+            pdf.cell(45, 7, " Intercepted Targets", border="B", fill=True)
+            pdf.cell(50, 7, " Spoofed Packets Sent", border="B", fill=True)
+            pdf.cell(45, 7, " Spoofing Duration", border="B", fill=True)
+            pdf.cell(50, 7, " Gateway Targeted", border="B", fill=True, ln=True)
+            
+            pdf.set_font("helvetica", "", 9)
+            pdf.set_text_color(*c_text_dark)
+            targets = mitm_status.get("targets", [])
+            pdf.cell(45, 7, f" {len(targets)} Hosts", border="B")
+            pdf.cell(50, 7, f" {mitm_status.get('packets_sent')} pkts", border="B")
+            pdf.cell(45, 7, f" {mitm_status.get('duration', 0):.1f} sec", border="B")
+            pdf.cell(50, 7, f" {mitm_status.get('gateway_ip')}", border="B", ln=True)
+            pdf.ln(8)
+
         # ── Detailed Security Findings ──
         pdf.set_font("helvetica", "B", 12)
         pdf.set_text_color(*c_dark_navy)
@@ -552,6 +677,19 @@ class MetricsManager:
                 recommendations.append("Native VLAN is set to the default VLAN 1. Change the native VLAN to an unused VLAN ID to mitigate VLAN hopping attacks.")
         if vlan_intel.get("routes"):
             recommendations.append("Routing protocol advertisements (OSPF/EIGRP/RIP) are visible on access ports. Enable routing protocol authentication and restrict advertisements to designated interfaces.")
+
+        # Inventory-related recommendations
+        inv_stats = getattr(self, "inventory_stats", {})
+        if inv_stats:
+            if inv_stats.get("total_open_ports", 0) > 10:
+                recommendations.append("High number of open ports detected across the network. Review exposed services and apply strict firewall rules to minimize attack surface.")
+            
+            os_dist = inv_stats.get("os_distribution", {})
+            if os_dist:
+                for os_name in os_dist.keys():
+                    if "Windows 7" in os_name or "XP" in os_name or "Server 2008" in os_name or "Server 2003" in os_name:
+                        recommendations.append(f"Legacy OS detected ({os_name}). Legacy operating systems are highly vulnerable and must be isolated or decommissioned immediately.")
+                        break
             
         if not recommendations:
             recommendations.append("Maintain continuous passive monitoring to identify unauthorized assets or communication drifts.")
