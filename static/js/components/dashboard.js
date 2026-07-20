@@ -18,6 +18,16 @@ const DashboardPage = {
                     ${this._renderStatCard('Sniffer', '—', 'red', 'sniffer')}
                 </div>
 
+                <!-- Network Topology Map -->
+                <div class="card" style="margin-bottom:16px; padding:0; overflow:hidden;">
+                    <div class="card-header" style="padding:16px; border-bottom:1px solid var(--border)">
+                        <span class="card-title">Network Infrastructure Topology</span>
+                    </div>
+                    <div id="topology-map" class="topology-container" style="margin-top:0; border:none; border-radius:0;">
+                        <div style="padding:20px; color:var(--text-muted); text-align:center;">Loading topology...</div>
+                    </div>
+                </div>
+
                 <!-- Passive Discovery Status -->
                 <div class="card passive-discovery-card" style="margin-bottom:16px">
                     <div class="card-header">
@@ -128,6 +138,10 @@ const DashboardPage = {
             clearInterval(this._refreshInterval);
             this._refreshInterval = null;
         }
+        if (this._network) {
+            this._network.destroy();
+            this._network = null;
+        }
     },
 
     async togglePassiveDiscovery() {
@@ -178,8 +192,111 @@ const DashboardPage = {
 
             // Update metrics gathering UI
             await this._updateMetricsUI();
+
+            // Render/Update Topology Map
+            await this._updateTopology();
         } catch (e) {
             // Silently retry on next interval
+        }
+    },
+
+    async _updateTopology() {
+        try {
+            const data = await API.get('/api/topology');
+            const container = document.getElementById('topology-map');
+            if (!container) return;
+
+            // Simple diff check to avoid redrawing the physics simulation if data hasn't changed
+            const dataHash = JSON.stringify(data);
+            if (this._lastTopologyHash === dataHash) return;
+            this._lastTopologyHash = dataHash;
+
+            if (!this._network) {
+                container.innerHTML = '';
+            }
+
+            // Map backend groups to Vis Network styling
+            const options = {
+                nodes: {
+                    shape: 'dot',
+                    size: 16,
+                    font: { color: '#a0aabf', face: 'Inter', size: 12 },
+                    borderWidth: 2,
+                    shadow: { enabled: true, color: 'rgba(0,0,0,0.5)', size: 10 }
+                },
+                edges: {
+                    width: 2,
+                    color: { color: 'rgba(255, 255, 255, 0.1)', highlight: '#00f0ff' },
+                    smooth: { type: 'continuous' }
+                },
+                groups: {
+                    internet: {
+                        shape: 'icon',
+                        icon: { face: '"FontAwesome"', code: '\uf0ac', size: 50, color: '#ff3b5c' }, // requires fontawesome, fallback to dot
+                        color: { background: '#ff3b5c', border: '#ff3b5c' },
+                        size: 30,
+                        font: { color: '#ff3b5c', size: 16, bold: true }
+                    },
+                    router: {
+                        shape: 'triangle',
+                        color: { background: '#1a1f2e', border: '#a55eea' },
+                        size: 20
+                    },
+                    switch: {
+                        shape: 'square',
+                        color: { background: '#1a1f2e', border: '#00f0ff' },
+                        size: 20
+                    },
+                    subnet: {
+                        shape: 'cloud',
+                        color: { background: 'rgba(255,255,255,0.05)', border: 'rgba(255,255,255,0.2)' },
+                        size: 25,
+                        font: { color: '#fff' }
+                    },
+                    endpoint: {
+                        color: { background: '#1a1f2e', border: '#00ff88' },
+                    },
+                    mobile: {
+                        shape: 'diamond',
+                        color: { background: '#1a1f2e', border: '#00ff88' },
+                    },
+                    camera: {
+                        shape: 'hexagon',
+                        color: { background: '#1a1f2e', border: '#ff9f43' },
+                    }
+                },
+                physics: {
+                    forceAtlas2Based: {
+                        gravitationalConstant: -50,
+                        centralGravity: 0.01,
+                        springLength: 100,
+                        springConstant: 0.08
+                    },
+                    maxVelocity: 50,
+                    solver: 'forceAtlas2Based',
+                    timestep: 0.35,
+                    stabilization: { iterations: 150 }
+                },
+                interaction: {
+                    hover: true,
+                    tooltipDelay: 200,
+                    zoomView: true,
+                    dragView: true
+                }
+            };
+
+            const graphData = {
+                nodes: new vis.DataSet(data.nodes),
+                edges: new vis.DataSet(data.edges)
+            };
+
+            if (!this._network) {
+                this._network = new vis.Network(container, graphData, options);
+            } else {
+                this._network.setData(graphData);
+            }
+        } catch (e) {
+            console.error("Topology render failed", e);
         }
     },
 

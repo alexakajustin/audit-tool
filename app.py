@@ -107,15 +107,17 @@ def create_app() -> tuple[Flask, SocketIO]:
     from api.metrics_routes import metrics_bp
     from api.vlan_routes import vlan_bp
     from api.mitm_routes import mitm_bp
+    from api.topology_routes import topology_bp
 
     app.register_blueprint(discovery_bp)
     app.register_blueprint(inventory_bp)
     app.register_blueprint(sniffer_bp)
-    app.register_blueprint(stats_bp)
-    app.register_blueprint(passive_discovery_bp)
     app.register_blueprint(metrics_bp)
+    app.register_blueprint(passive_discovery_bp)
     app.register_blueprint(vlan_bp)
+    app.register_blueprint(stats_bp)
     app.register_blueprint(mitm_bp)
+    app.register_blueprint(topology_bp)
 
     # ── Root route — serves the SPA ──────────────────────────
     @app.route("/")
