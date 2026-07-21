@@ -227,7 +227,7 @@ const DashboardPage = {
                 edges: {
                     width: 2,
                     color: { color: 'rgba(255, 255, 255, 0.15)', highlight: '#00f0ff' },
-                    smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.4 },
+                    smooth: { type: 'continuous' },
                     arrows: { to: { enabled: false } }
                 },
                 groups: {
@@ -276,19 +276,22 @@ const DashboardPage = {
                 },
                 layout: {
                     hierarchical: {
-                        enabled: true,
-                        direction: 'LR',
-                        sortMethod: 'directed',
-                        levelSeparation: 180,
-                        nodeSpacing: 80,
-                        treeSpacing: 100,
-                        blockShifting: true,
-                        edgeMinimization: true,
-                        parentCentralization: true
+                        enabled: false
                     }
                 },
                 physics: {
-                    enabled: false
+                    enabled: true,
+                    forceAtlas2Based: {
+                        gravitationalConstant: -70,
+                        centralGravity: 0.01,
+                        springLength: 120,
+                        springConstant: 0.08,
+                        damping: 0.4
+                    },
+                    maxVelocity: 50,
+                    solver: 'forceAtlas2Based',
+                    timestep: 0.35,
+                    stabilization: { iterations: 150 }
                 },
                 interaction: {
                     hover: true,
@@ -299,15 +302,20 @@ const DashboardPage = {
                 }
             };
 
-            const graphData = {
-                nodes: new vis.DataSet(data.nodes),
-                edges: new vis.DataSet(data.edges)
-            };
-
             if (!this._network) {
+                this._nodesDataSet = new vis.DataSet(data.nodes);
+                this._edgesDataSet = new vis.DataSet(data.edges);
+                
+                const graphData = {
+                    nodes: this._nodesDataSet,
+                    edges: this._edgesDataSet
+                };
+                
                 this._network = new vis.Network(container, graphData, options);
             } else {
-                this._network.setData(graphData);
+                // Seamlessly update data without resetting the view or physics
+                this._nodesDataSet.update(data.nodes);
+                this._edgesDataSet.update(data.edges);
             }
         } catch (e) {
             console.error("Topology render failed", e);
