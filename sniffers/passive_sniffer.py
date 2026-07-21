@@ -6,11 +6,14 @@ streaming via WebSocket. Supports BPF filters and PCAP import/export.
 
 Enhanced protocol identification: mDNS, LLMNR, SSDP, NetBIOS, NDP.
 Tracks DNS queries, security observations, and network intelligence.
+Deep traffic intelligence: DNS reverse mapping, QUIC/HTTP3 SNI,
+content categorization, per-device activity timelines.
 """
 
 from __future__ import annotations
 
 import os
+import struct
 import threading
 import time
 from collections import OrderedDict
@@ -57,6 +60,26 @@ class PassiveSniffer(BaseSniffer):
         self._device_hostnames: dict[str, str] = {}                # IP -> hostname (from DHCP/NetBIOS/mDNS)
         self._device_os: dict[str, str] = {}                       # IP -> OS guess (from User-Agent)
 
+        # ── Deep Traffic Intelligence (v2) ────────────────────
+        self._dns_reverse: dict[str, str] = {}                     # IP -> domain (from DNS responses)
+        self._device_timeline: dict[str, list] = {}                # IP -> [{timestamp, domain, protocol, type}]
+        self._device_categories: dict[str, dict] = {}              # IP -> {category: hit_count}
+        self._intercepted_ips: set[str] = set()                    # IPs currently being MITM'd
+
+        # ── DoH Providers (connections to these = hidden DNS) ──
+        self._doh_providers: set[str] = {
+            "cloudflare-dns.com", "dns.google", "doh.opendns.com",
+            "dns.quad9.net", "doh.cleanbrowsing.org", "dns.adguard.com",
+            "doh.dns.sb", "dns.nextdns.io", "dns.mullvad.net",
+        }
+        self._doh_provider_ips: set[str] = {
+            "1.1.1.1", "1.0.0.1",                                 # Cloudflare
+            "8.8.8.8", "8.8.4.4",                                 # Google
+            "9.9.9.9", "149.112.112.112",                          # Quad9
+            "208.67.222.222", "208.67.220.220",                    # OpenDNS
+            "94.140.14.14", "94.140.15.15",                        # AdGuard
+        }
+
     @property
     def name(self) -> str:
         return "passive_sniffer"
@@ -99,6 +122,9 @@ class PassiveSniffer(BaseSniffer):
         self._device_user_agents = {}
         self._device_hostnames = {}
         self._device_os = {}
+        self._dns_reverse = {}
+        self._device_timeline = {}
+        self._device_categories = {}
 
         # Detect local IP for this interface
         self._local_ip = self._detect_local_ip(interface)
@@ -169,12 +195,43 @@ class PassiveSniffer(BaseSniffer):
                 "mac_map": dict(self._mac_to_ip),
                 # Per-device deep profiles
                 "device_profiles": self._build_device_profiles(),
+                # Deep Traffic Intelligence v2
+                "intercepted_ips": list(self._intercepted_ips),
+                "dns_reverse_map_size": len(self._dns_reverse),
+                "category_summary": self._build_global_category_summary(),
+                "activity_feed": self._build_activity_feed(),
             }
 
     def get_recent_packets(self, count: int = 50) -> list[dict]:
         """Get the most recent N packets as dicts."""
         with self._lock:
             return [p.to_dict() for p in self._packets[-count:]]
+
+    def set_intercepted_ips(self, ips: set[str]) -> None:
+        """Update the set of IPs currently being MITM'd (called from ArpSpoofer)."""
+        with self._lock:
+            self._intercepted_ips = set(ips)
+
+    def get_device_timeline(self, ip: str, limit: int = 100) -> list[dict]:
+        """Get timestamped activity log for a specific device."""
+        with self._lock:
+            entries = self._device_timeline.get(ip, [])
+            return entries[-limit:]
+
+    def get_category_summary(self) -> dict:
+        """Get content category breakdown across all profiled devices."""
+        with self._lock:
+            result = {}
+            for ip, cats in self._device_categories.items():
+                if ip == self._local_ip:
+                    continue
+                result[ip] = {
+                    "hostname": self._device_hostnames.get(ip, ""),
+                    "mac": self._ip_to_mac.get(ip, ""),
+                    "categories": dict(cats),
+                    "intercepted": ip in self._intercepted_ips,
+                }
+            return result
 
     def _build_device_profiles(self) -> list[dict]:
         """Build per-device activity profiles (called inside lock)."""
@@ -214,6 +271,12 @@ class PassiveSniffer(BaseSniffer):
                 "connections": list(self._host_connections.get(ip, set()))[:15],
                 "dns_count": sum(self._device_dns.get(ip, {}).values()),
                 "sni_count": sum(self._device_sni.get(ip, {}).values()),
+                # Deep Traffic Intelligence v2
+                "intercepted": ip in self._intercepted_ips,
+                "categories": dict(self._device_categories.get(ip, {})),
+                "flag_adult": self._device_categories.get(ip, {}).get("adult", 0) > 0,
+                "timeline": self._device_timeline.get(ip, [])[-50:],
+                "domains_resolved": len(self._device_dns.get(ip, {})),
             }
             # Only include devices with some activity
             if profile["sites_visited"] or profile["data_volume"] > 0:
@@ -222,6 +285,326 @@ class PassiveSniffer(BaseSniffer):
         # Sort by data volume descending
         profiles.sort(key=lambda p: p["data_volume"], reverse=True)
         return profiles[:30]
+
+    def _build_global_category_summary(self) -> dict:
+        """Aggregate content categories across all devices (called inside lock)."""
+        totals: dict[str, int] = {}
+        for ip, cats in self._device_categories.items():
+            if ip == self._local_ip:
+                continue
+            for cat, count in cats.items():
+                totals[cat] = totals.get(cat, 0) + count
+        return totals
+
+    def _build_activity_feed(self) -> list[dict]:
+        """Build a real-time cross-device activity feed (called inside lock)."""
+        all_entries = []
+        for ip, timeline in self._device_timeline.items():
+            if ip == self._local_ip:
+                continue
+            for entry in timeline[-30:]:  # Last 30 per device
+                all_entries.append({
+                    **entry,
+                    "ip": ip,
+                    "hostname": self._device_hostnames.get(ip, ""),
+                    "intercepted": ip in self._intercepted_ips,
+                })
+        # Sort by timestamp descending, return last 100
+        all_entries.sort(key=lambda e: e.get("timestamp", 0), reverse=True)
+        return all_entries[:100]
+
+    def _add_timeline_entry(self, ip: str, domain: str, protocol: str, entry_type: str) -> None:
+        """Add a timestamped activity entry for a device (called inside lock)."""
+        if not ip or ip == self._local_ip:
+            return
+        if ip not in self._device_timeline:
+            self._device_timeline[ip] = []
+        entry = {
+            "timestamp": time.time(),
+            "domain": domain,
+            "protocol": protocol,
+            "type": entry_type,
+            "category": self._categorize_domain(domain),
+        }
+        self._device_timeline[ip].append(entry)
+        # Cap at 200 entries per device
+        if len(self._device_timeline[ip]) > 200:
+            self._device_timeline[ip] = self._device_timeline[ip][-200:]
+
+    def _track_category(self, ip: str, domain: str) -> None:
+        """Track content category for a domain visit (called inside lock)."""
+        if not ip or not domain or ip == self._local_ip:
+            return
+        cat = self._categorize_domain(domain)
+        if cat:
+            if ip not in self._device_categories:
+                self._device_categories[ip] = {}
+            self._device_categories[ip][cat] = self._device_categories[ip].get(cat, 0) + 1
+
+    def _categorize_domain(self, domain: str) -> str:
+        """Classify a domain into a content category using pattern matching."""
+        if not domain:
+            return ""
+        d = domain.lower()
+
+        # Adult / NSFW
+        adult_patterns = [
+            "pornhub", "xvideos", "xhamster", "redtube", "youporn", "xnxx",
+            "brazzers", "bangbros", "realitykings", "naughtyamerica",
+            "chaturbate", "stripchat", "livejasmin", "cam4", "bongacams",
+            "onlyfans", "fansly", "manyvids", "clips4sale",
+            "spankbang", "eporner", "tube8", "xtube", "beeg",
+            "porn", "xxx", "hentai", "rule34", "nhentai", "hanime",
+            "sexe", "adult", "nsfw", "erotic",
+        ]
+        if any(p in d for p in adult_patterns):
+            return "adult"
+
+        # Social Media
+        social_patterns = [
+            "facebook.com", "fbcdn.net", "instagram.com", "cdninstagram",
+            "twitter.com", "x.com", "twimg.com",
+            "tiktok.com", "tiktokcdn.com", "musical.ly",
+            "reddit.com", "redd.it", "redditstatic.com",
+            "snapchat.com", "sc-cdn.net",
+            "linkedin.com", "licdn.com",
+            "pinterest.com", "pinimg.com",
+            "tumblr.com", "discord.com", "discordapp.com",
+            "telegram.org", "t.me", "whatsapp.com", "whatsapp.net",
+            "mastodon", "threads.net",
+        ]
+        if any(p in d for p in social_patterns):
+            return "social_media"
+
+        # Streaming / Entertainment
+        streaming_patterns = [
+            "youtube.com", "googlevideo.com", "ytimg.com", "yt3.ggpht",
+            "netflix.com", "nflxvideo.net", "nflxso.net", "nflxext.com",
+            "disneyplus.com", "disney-plus.net", "bamgrid.com",
+            "hbomax.com", "max.com", "hbogo.com",
+            "primevideo.com", "amazonvideo.com", "aiv-cdn.net",
+            "hulu.com", "hulustream.com",
+            "twitch.tv", "jtvnw.net", "twitchcdn.net",
+            "spotify.com", "scdn.co", "spotifycdn.com",
+            "soundcloud.com", "deezer.com", "tidal.com",
+            "crunchyroll.com", "funimation.com", "vrv.co",
+            "roku.com", "peacocktv.com", "paramountplus.com",
+            "apple.com/tv", "applemusic",
+        ]
+        if any(p in d for p in streaming_patterns):
+            return "streaming"
+
+        # Gaming
+        gaming_patterns = [
+            "steampowered.com", "steamcommunity.com", "steamstatic.com",
+            "epicgames.com", "unrealengine.com",
+            "ea.com", "origin.com", "ea-api.com",
+            "riotgames.com", "leagueoflegends.com",
+            "blizzard.com", "battle.net", "blz-contentstack.com",
+            "xbox.com", "xboxlive.com",
+            "playstation.com", "playstation.net", "sonyentertainmentnetwork.com",
+            "ubisoft.com", "ubi.com",
+            "roblox.com", "rbxcdn.com",
+            "minecraft.net", "mojang.com",
+            "twitch.tv", "curseforge.com",
+        ]
+        if any(p in d for p in gaming_patterns):
+            return "gaming"
+
+        # News
+        news_patterns = [
+            "cnn.com", "bbc.com", "bbc.co.uk", "reuters.com", "apnews.com",
+            "foxnews.com", "msnbc.com", "nbcnews.com", "abcnews.go.com",
+            "nytimes.com", "washingtonpost.com", "theguardian.com",
+            "wsj.com", "bloomberg.com", "cnbc.com", "aljazeera.com",
+            "digi24.ro", "mediafax.ro", "hotnews.ro", "stiripesurse.ro",
+            "news.google", "news.yahoo",
+        ]
+        if any(p in d for p in news_patterns):
+            return "news"
+
+        # Finance / Banking
+        finance_patterns = [
+            "paypal.com", "stripe.com", "wise.com", "revolut.com",
+            "bank", "banking", "chase.com", "wellsfargo.com",
+            "americanexpress.com", "capitalone.com",
+            "coinbase.com", "binance.com", "kraken.com", "crypto.com",
+            "robinhood.com", "etrade.com", "schwab.com",
+            "bcr.ro", "brd.ro", "ingbank.ro", "raiffeisen.ro",
+        ]
+        if any(p in d for p in finance_patterns):
+            return "finance"
+
+        # Shopping
+        shopping_patterns = [
+            "amazon.com", "amazon.co", "amazon.", "amzn.to",
+            "ebay.com", "aliexpress.com", "alibaba.com",
+            "walmart.com", "target.com", "bestbuy.com",
+            "shopify.com", "etsy.com",
+            "emag.ro", "olx.ro", "altex.ro", "pcgarage.ro",
+        ]
+        if any(p in d for p in shopping_patterns):
+            return "shopping"
+
+        # VPN / Proxy (evasion)
+        vpn_patterns = [
+            "nordvpn.com", "expressvpn.com", "surfshark.com",
+            "protonvpn.com", "cyberghostvpn.com", "privateinternetaccess.com",
+            "torproject.org", "tor2web",
+            "mullvad.net", "windscribe.com", "tunnelbear.com",
+            "openvpn", "wireguard",
+        ]
+        if any(p in d for p in vpn_patterns):
+            return "vpn_proxy"
+
+        # Productivity
+        productivity_patterns = [
+            "office.com", "office365.com", "microsoft.com", "live.com",
+            "google.com", "googleapis.com", "gstatic.com",
+            "zoom.us", "zoomgov.com",
+            "slack.com", "slack-edge.com",
+            "notion.so", "trello.com", "asana.com", "monday.com",
+            "atlassian.com", "jira.", "confluence.",
+            "github.com", "gitlab.com", "bitbucket.org",
+            "stackoverflow.com", "stackexchange.com",
+        ]
+        if any(p in d for p in productivity_patterns):
+            return "productivity"
+
+        # Email
+        email_patterns = [
+            "gmail.com", "mail.google", "outlook.com", "outlook.live",
+            "yahoo.com/mail", "mail.yahoo", "protonmail.com", "proton.me",
+            "zoho.com/mail", "icloud.com/mail", "fastmail.com",
+        ]
+        if any(p in d for p in email_patterns):
+            return "email"
+
+        # Cloud Storage
+        cloud_patterns = [
+            "dropbox.com", "drive.google", "onedrive.live",
+            "icloud.com", "box.com", "mega.nz", "mega.io",
+            "wetransfer.com", "mediafire.com", "4shared.com",
+        ]
+        if any(p in d for p in cloud_patterns):
+            return "cloud_storage"
+
+        return ""
+
+    def _extract_quic_sni(self, payload: bytes) -> str:
+        """
+        Extract SNI from a QUIC Initial packet (HTTP/3).
+
+        QUIC Initial packets contain a TLS ClientHello in the crypto frames.
+        The SNI extension is in the same format as regular TLS.
+        """
+        try:
+            if len(payload) < 20:
+                return ""
+
+            # QUIC long header: first byte has form bit (1) + fixed bit (1) + type (2)
+            first_byte = payload[0]
+
+            # Check if long header (bit 7 set)
+            if not (first_byte & 0x80):
+                return ""
+
+            # Check if Initial packet (type bits 4-5 = 0b00)
+            packet_type = (first_byte & 0x30) >> 4
+            if packet_type != 0x00:
+                return ""
+
+            # Skip: Version (4 bytes) at offset 1
+            offset = 5
+
+            if offset >= len(payload):
+                return ""
+
+            # DCID Length + DCID
+            dcid_len = payload[offset]
+            offset += 1 + dcid_len
+
+            if offset >= len(payload):
+                return ""
+
+            # SCID Length + SCID
+            scid_len = payload[offset]
+            offset += 1 + scid_len
+
+            if offset >= len(payload):
+                return ""
+
+            # Token Length (variable-length integer)
+            token_len_first = payload[offset]
+            token_len_type = (token_len_first & 0xC0) >> 6
+            if token_len_type == 0:
+                token_len = token_len_first & 0x3F
+                offset += 1
+            elif token_len_type == 1:
+                if offset + 2 > len(payload):
+                    return ""
+                token_len = ((token_len_first & 0x3F) << 8) | payload[offset + 1]
+                offset += 2
+            else:
+                return ""  # Token too large for Initial
+
+            offset += token_len
+
+            if offset + 2 > len(payload):
+                return ""
+
+            # Packet Length (variable-length integer) — skip
+            pkt_len_first = payload[offset]
+            pkt_len_type = (pkt_len_first & 0xC0) >> 6
+            if pkt_len_type == 0:
+                offset += 1
+            elif pkt_len_type == 1:
+                offset += 2
+            elif pkt_len_type == 2:
+                offset += 4
+            else:
+                offset += 8
+
+            # The rest is encrypted for real QUIC, but some implementations
+            # and the initial crypto handshake may have the ClientHello visible.
+            # Search for TLS ClientHello pattern in remaining bytes
+            remaining = payload[offset:]
+            return self._find_sni_in_bytes(remaining)
+
+        except Exception:
+            pass
+        return ""
+
+    def _find_sni_in_bytes(self, data: bytes) -> str:
+        """Search for a TLS SNI extension pattern anywhere in raw bytes."""
+        try:
+            # Look for the server_name extension type (0x00 0x00) followed by
+            # reasonable-looking SNI data. This is a heuristic scan.
+            i = 0
+            while i < len(data) - 10:
+                # Look for extension type 0x0000 (server_name)
+                if data[i] == 0x00 and data[i + 1] == 0x00:
+                    ext_len = (data[i + 2] << 8) | data[i + 3]
+                    if 4 < ext_len < 256 and i + 4 + ext_len <= len(data):
+                        # SNI list: list_len(2), name_type(1), name_len(2), name
+                        name_offset = i + 4
+                        if name_offset + 5 <= len(data):
+                            name_type = data[name_offset + 2]
+                            name_len = (data[name_offset + 3] << 8) | data[name_offset + 4]
+                            if name_type == 0x00 and 3 < name_len < 253:
+                                if name_offset + 5 + name_len <= len(data):
+                                    name = data[name_offset + 5: name_offset + 5 + name_len]
+                                    try:
+                                        sni = name.decode("ascii", errors="ignore").strip()
+                                        # Validate it looks like a domain
+                                        if sni and "." in sni and len(sni) > 3 and " " not in sni:
+                                            return sni
+                                    except Exception:
+                                        pass
+                i += 1
+        except Exception:
+            pass
+        return ""
 
     def export_pcap(self, filepath: str) -> str:
         try:
@@ -361,6 +744,38 @@ class PassiveSniffer(BaseSniffer):
                             if querier not in self._device_dns:
                                 self._device_dns[querier] = OrderedDict()
                             self._device_dns[querier][qname] = self._device_dns[querier].get(qname, 0) + 1
+                            # Timeline + Category tracking
+                            self._add_timeline_entry(querier, qname, "DNS", "dns_query")
+                            self._track_category(querier, qname)
+
+                # ── DNS Response Parsing (IP→Domain reverse map) ─────
+                elif dns.qr == 1 and dns.ancount and dns.ancount > 0:
+                    # Extract the queried name
+                    query_name = ""
+                    if dns.qd:
+                        qn = dns.qd.qname
+                        if isinstance(qn, bytes):
+                            qn = qn.decode("utf-8", errors="ignore")
+                        query_name = str(qn).rstrip(".")
+
+                    if query_name and "." in query_name:
+                        # Parse answer records to map resolved IPs back to the domain
+                        try:
+                            for i in range(min(dns.ancount, 20)):
+                                rr = dns.an[i] if hasattr(dns.an, '__getitem__') else dns.an
+                                if hasattr(rr, 'rdata'):
+                                    rdata = str(rr.rdata)
+                                    # Check if rdata is an IP address
+                                    try:
+                                        import ipaddress
+                                        ipaddress.ip_address(rdata)
+                                        # Valid IP → map it back to the domain
+                                        if len(self._dns_reverse) < 50000:  # Safety cap
+                                            self._dns_reverse[rdata] = query_name
+                                    except (ValueError, TypeError):
+                                        pass  # CNAME or other non-IP record
+                        except Exception:
+                            pass
 
             # Track services per host by port
             if info.dst_port and info.dst:
@@ -394,8 +809,77 @@ class PassiveSniffer(BaseSniffer):
                                 if client_ip not in self._device_sni:
                                     self._device_sni[client_ip] = OrderedDict()
                                 self._device_sni[client_ip][sni] = self._device_sni[client_ip].get(sni, 0) + 1
+                                # Timeline + Category tracking
+                                self._add_timeline_entry(client_ip, sni, "TLS", "tls_connect")
+                                self._track_category(client_ip, sni)
+
+                                # ── DoH Detection ────────────────────────
+                                if sni in self._doh_providers:
+                                    alert_key = f"doh:{client_ip}:{sni}"
+                                    if alert_key not in self._alerts_triggered:
+                                        self._alerts_triggered.add(alert_key)
+                                        if len(self._security_alerts) < 200:
+                                            self._security_alerts.append({
+                                                "type": "dns_bypass_doh",
+                                                "severity": "warning",
+                                                "message": f"DNS-over-HTTPS detected via {sni} — DNS queries are hidden from monitoring",
+                                                "src": client_ip,
+                                                "dst": info.dst,
+                                                "timestamp": info.timestamp,
+                                            })
                     except Exception:
                         pass
+
+            # ── QUIC / HTTP/3 SNI Extraction ───────────────────
+            # Modern browsers use QUIC (UDP:443) which bypasses TLS SNI capture
+            if pkt.haslayer(UDP) and pkt.haslayer(Raw):
+                udp = pkt[UDP]
+                if udp.dport == 443 or udp.sport == 443:
+                    try:
+                        payload = bytes(pkt[Raw].load)
+                        quic_sni = self._extract_quic_sni(payload)
+                        if quic_sni:
+                            client_ip = info.src
+                            if client_ip:
+                                if client_ip not in self._device_sni:
+                                    self._device_sni[client_ip] = OrderedDict()
+                                self._device_sni[client_ip][quic_sni] = self._device_sni[client_ip].get(quic_sni, 0) + 1
+                                self._add_timeline_entry(client_ip, quic_sni, "QUIC", "quic_connect")
+                                self._track_category(client_ip, quic_sni)
+
+                                # DoH over QUIC detection
+                                if quic_sni in self._doh_providers:
+                                    alert_key = f"doh_quic:{client_ip}:{quic_sni}"
+                                    if alert_key not in self._alerts_triggered:
+                                        self._alerts_triggered.add(alert_key)
+                                        if len(self._security_alerts) < 200:
+                                            self._security_alerts.append({
+                                                "type": "dns_bypass_doh",
+                                                "severity": "warning",
+                                                "message": f"DNS-over-HTTPS (QUIC) detected via {quic_sni} — DNS queries are hidden",
+                                                "src": client_ip,
+                                                "dst": info.dst,
+                                                "timestamp": info.timestamp,
+                                            })
+                    except Exception:
+                        pass
+
+            # ── DoH Detection by IP (port 443 to known DoH provider IPs) ──
+            if info.dst_port == 443 and info.dst in self._doh_provider_ips:
+                alert_key = f"doh_ip:{info.src}:{info.dst}"
+                if alert_key not in self._alerts_triggered:
+                    self._alerts_triggered.add(alert_key)
+                    if len(self._security_alerts) < 200:
+                        # Try to get domain from DNS reverse map
+                        provider = self._dns_reverse.get(info.dst, info.dst)
+                        self._security_alerts.append({
+                            "type": "dns_bypass_doh",
+                            "severity": "warning",
+                            "message": f"Possible DNS-over-HTTPS connection to {provider} ({info.dst})",
+                            "src": info.src,
+                            "dst": info.dst,
+                            "timestamp": info.timestamp,
+                        })
 
             # ── Security alerts ──────────────────────────────
             # Cleartext HTTP traffic — deep extraction (Host, URL, User-Agent)
@@ -422,6 +906,9 @@ class PassiveSniffer(BaseSniffer):
                             if info.src not in self._device_http_hosts:
                                 self._device_http_hosts[info.src] = set()
                             self._device_http_hosts[info.src].add(host_header)
+                            # Timeline + Category tracking
+                            self._add_timeline_entry(info.src, host_header, "HTTP", "http_request")
+                            self._track_category(info.src, host_header)
 
                             # Capture full URL (GET /path HTTP/1.1)
                             if request_line and (request_line.startswith("GET ") or request_line.startswith("POST ")):

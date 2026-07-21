@@ -118,3 +118,18 @@ def import_pcap():
         return jsonify(result.to_dict())
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@sniffer_bp.route("/api/sniffer/timeline/<ip>", methods=["GET"])
+def get_device_timeline(ip):
+    """Get timestamped activity log for a specific device."""
+    limit = request.args.get("limit", 100, type=int)
+    timeline = api.sniffer.get_device_timeline(ip=ip, limit=min(limit, 500))
+    return jsonify({"ip": ip, "timeline": timeline, "count": len(timeline)})
+
+
+@sniffer_bp.route("/api/sniffer/categories", methods=["GET"])
+def get_categories():
+    """Get content category breakdown across all profiled devices."""
+    categories = api.sniffer.get_category_summary()
+    return jsonify(categories)

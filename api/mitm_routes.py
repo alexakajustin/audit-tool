@@ -73,3 +73,55 @@ def mitm_stop():
     if "error" in result:
         return jsonify(result), 400
     return jsonify(result)
+
+
+@mitm_bp.route("/api/mitm/start-all", methods=["POST"])
+def mitm_start_all():
+    """
+    One-click intercept ALL devices on the subnet.
+    Scans, selects all non-gateway hosts, starts spoofing + sniffer.
+    Body JSON (optional):
+        interface: str — network interface
+    """
+    if not api.arp_spoofer:
+        return jsonify({"error": "ARP Spoofer not available"}), 503
+
+    data = request.get_json(force=True, silent=True) or {}
+    interface = data.get("interface", "")
+
+    result = api.arp_spoofer.start_all(interface=interface)
+    if "error" in result:
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+@mitm_bp.route("/api/mitm/activity", methods=["GET"])
+def mitm_activity():
+    """
+    Get per-target browsing activity summary.
+    Returns device profiles for only MITM-intercepted IPs.
+    """
+    if not api.arp_spoofer:
+        return jsonify({"error": "ARP Spoofer not available"}), 503
+
+    status = api.arp_spoofer.get_status()
+    target_ips = [t["ip"] for t in status.get("targets", [])]
+
+    if not target_ips:
+        return jsonify({"targets": [], "profiles": []})
+
+    # Get device profiles from sniffer for intercepted IPs only
+    profiles = []
+    if api.sniffer:
+        stats = api.sniffer.get_stats()
+        for profile in stats.get("device_profiles", []):
+            if profile.get("ip") in target_ips:
+                profiles.append(profile)
+
+    return jsonify({
+        "targets": target_ips,
+        "target_count": len(target_ips),
+        "profiles": profiles,
+        "is_running": status.get("is_running", False),
+        "packets_sent": status.get("packets_sent", 0),
+    })

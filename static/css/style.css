@@ -706,6 +706,13 @@ select.form-control option {
     font-family: var(--font-mono);
 }
 
+.badge-category {
+    padding: 2px 8px;
+    font-size: 0.65rem;
+    font-family: var(--font-sans);
+    border: 1px solid transparent;
+}
+
 /* Protocol colors */
 .proto-arp    { background: rgba(0, 240, 255, 0.12); color: #00f0ff; }
 .proto-dns    { background: rgba(165, 94, 234, 0.12); color: #a55eea; }

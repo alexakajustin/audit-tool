@@ -94,6 +94,7 @@ def create_app() -> tuple[Flask, SocketIO]:
 
     # 8. ARP Spoofer / MITM Engine — active traffic interception
     arp_spoofer = ArpSpoofer()
+    arp_spoofer.set_sniffer(sniffer)  # Link MITM to sniffer for auto-start & tagging
 
     # Inject services into the API layer
     api.init_services(registry, orchestrator, inventory, sniffer, passive_discovery, metrics_manager, vlan_discovery, arp_spoofer)

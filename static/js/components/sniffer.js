@@ -65,6 +65,9 @@ const SnifferPage = {
                             <button class="btn btn-sm" onclick="SnifferPage.mitmScan()" id="btn-mitm-scan" style="font-size:0.72rem;padding:4px 10px">
                                 Scan Network
                             </button>
+                            <button class="btn btn-sm" onclick="SnifferPage.mitmStartAll()" id="btn-mitm-start-all" style="font-size:0.72rem;padding:4px 10px;background:rgba(255,59,92,0.25);color:var(--red);border-color:rgba(255,59,92,0.4);font-weight:600">
+                                ⚡ Intercept ALL Devices
+                            </button>
                             <button class="btn btn-sm" onclick="SnifferPage.mitmStart()" id="btn-mitm-start" style="font-size:0.72rem;padding:4px 10px;display:none;background:rgba(255,59,92,0.15);color:var(--red);border-color:rgba(255,59,92,0.3)">
                                 Start Interception
                             </button>
@@ -175,6 +178,23 @@ const SnifferPage = {
                     </div>
                     <div id="device-profiles-container" style="max-height:500px;overflow-y:auto">
                         <div class="intel-empty" style="padding:20px">Capturing traffic to build device profiles... Browse sites on other devices to see their activity appear here.</div>
+                    </div>
+                </div>
+
+                <!-- NETWORK ACTIVITY FEED (real-time cross-device) -->
+                <div class="card" style="margin-bottom:16px">
+                    <div class="card-header">
+                        <span class="card-title" style="display:flex;align-items:center;gap:8px;color:var(--green)">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px">
+                                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                            </svg>
+                            LIVE ACTIVITY FEED — All Devices
+                            <span id="feed-live-dot" style="width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse-glow 2s ease-in-out infinite;display:none"></span>
+                        </span>
+                        <span id="feed-count" style="color:var(--text-muted);font-size:0.75rem">0 events</span>
+                    </div>
+                    <div id="activity-feed-container" style="max-height:300px;overflow-y:auto;font-family:var(--font-mono);font-size:0.75rem">
+                        <div class="intel-empty" style="padding:20px">Waiting for network activity...</div>
                     </div>
                 </div>
 
@@ -390,6 +410,42 @@ const SnifferPage = {
         }
     },
 
+    async mitmStartAll() {
+        const btn = document.getElementById('btn-mitm-start-all');
+        if (btn) { btn.textContent = '⚡ Scanning & Intercepting...'; btn.disabled = true; }
+
+        try {
+            const iface = document.getElementById('sniff-interface').value;
+            const resp = await fetch('/api/mitm/start-all', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ interface: iface }),
+            });
+            const data = await resp.json();
+
+            if (data.error) {
+                App.toast('Intercept ALL failed: ' + data.error, 'error');
+                return;
+            }
+
+            const total = data.total_hosts_found || data.target_count || '?';
+            App.toast(`⚡ Intercepting ALL ${data.target_count} devices (${total} found) — full network visibility active`, 'success');
+            this._showMitmRunning(true);
+
+            // Also start capture if not already running
+            const stats = await API.getSnifferStats();
+            if (stats.is_running) {
+                this._showRunning(true);
+                this._startPolling();
+            }
+
+        } catch (e) {
+            App.toast('Failed to intercept all: ' + e.message, 'error');
+        } finally {
+            if (btn) { btn.textContent = '⚡ Intercept ALL Devices'; btn.disabled = false; }
+        }
+    },
+
     async mitmStop() {
         try {
             const resp = await fetch('/api/mitm/stop', { method: 'POST' });
@@ -409,6 +465,7 @@ const SnifferPage = {
         const startBtn = document.getElementById('btn-mitm-start');
         const stopBtn = document.getElementById('btn-mitm-stop');
         const scanBtn = document.getElementById('btn-mitm-scan');
+        const startAllBtn = document.getElementById('btn-mitm-start-all');
 
         if (dot) dot.style.background = running ? 'var(--red)' : 'var(--text-muted)';
         if (dot && running) dot.style.boxShadow = '0 0 8px var(--red)';
@@ -420,6 +477,7 @@ const SnifferPage = {
         if (startBtn) startBtn.style.display = running ? 'none' : 'inline-flex';
         if (stopBtn) stopBtn.style.display = running ? 'inline-flex' : 'none';
         if (scanBtn) scanBtn.disabled = running;
+        if (startAllBtn) startAllBtn.style.display = running ? 'none' : 'inline-flex';
     },
 
     async _pollMitmStatus() {
@@ -729,6 +787,11 @@ const SnifferPage = {
         if (stats.device_profiles) {
             this._renderDeviceProfiles(stats.device_profiles);
         }
+
+        // ── Activity Feed ──────────────────────────────
+        if (stats.activity_feed) {
+            this._renderActivityFeed(stats.activity_feed);
+        }
     },
 
     /**
@@ -785,13 +848,38 @@ const SnifferPage = {
                 ? `<div style="margin-top:4px;font-size:0.65rem;color:var(--text-muted)">🌐 ${this._escapeHtml(p.user_agents[0].substring(0, 120))}</div>`
                 : '';
 
-            // Services
-            const svcsHtml = p.services && p.services.length > 0
-                ? `<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${p.services.map(s => {
-                    const danger = ['FTP','Telnet','HTTP','SNMP','TFTP'].includes(s);
-                    return `<span class="badge badge-protocol" style="font-size:0.65rem;${danger ? 'background:rgba(255,59,92,0.15);color:var(--red)' : ''}">${s}</span>`;
-                  }).join('')}</div>`
+            // Categories
+            let catHtml = '';
+            if (p.categories) {
+                const cats = Object.entries(p.categories).sort((a,b) => b[1] - a[1]);
+                if (cats.length > 0) {
+                    catHtml = `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">
+                        ${cats.map(([c, count]) => `<span class="badge badge-category" style="background:${this._getCategoryColor(c)}20;color:${this._getCategoryColor(c)};border-color:${this._getCategoryColor(c)}40">${c.toUpperCase()} <span style="opacity:0.6;font-size:0.6rem">×${count}</span></span>`).join('')}
+                    </div>`;
+                }
+            }
+
+            // NSFW Warning
+            const adultWarning = p.flag_adult ? `<div style="margin-bottom:6px;padding:4px 8px;background:rgba(255,59,92,0.1);border-left:3px solid var(--red);color:var(--red);font-size:0.7rem;font-weight:600;display:flex;align-items:center;gap:6px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>ADULT/NSFW CONTENT DETECTED</div>` : '';
+
+            // Timeline
+            const timelineHtml = p.timeline && p.timeline.length > 0
+                ? `<div style="margin-top:8px">
+                     <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:4px;font-weight:600">RECENT ACTIVITY TIMELINE:</div>
+                     <div style="display:flex;flex-direction:column;gap:2px;max-height:100px;overflow-y:auto;background:var(--bg-deep);padding:6px;border-radius:4px">
+                       ${[...p.timeline].reverse().slice(0, 15).map(t => {
+                           const isAdult = t.category === 'adult';
+                           return `<div style="font-family:var(--font-mono);font-size:0.68rem;display:flex;gap:6px;color:${isAdult ? 'var(--red)' : 'var(--text-secondary)'}">
+                             <span style="color:var(--text-muted)">[${this._formatTimestamp(t.timestamp)}]</span>
+                             <span style="color:${this._getCategoryColor(t.category)};min-width:30px">[${t.protocol}]</span>
+                             <span style="${isAdult ? 'font-weight:600' : ''}">${this._escapeHtml(t.domain)}</span>
+                           </div>`;
+                       }).join('')}
+                     </div>
+                   </div>`
                 : '';
+
+            const interceptedTag = p.intercepted ? `<span class="badge" style="background:rgba(255,59,92,0.15);color:var(--red);border-color:var(--red);font-weight:600;font-size:0.6rem;margin-left:6px">⚡ INTERCEPTED</span>` : '';
 
             return `
                 <div style="padding:12px 16px;border-bottom:1px solid var(--border);${isLocal ? 'opacity:0.3' : ''}">
@@ -799,19 +887,69 @@ const SnifferPage = {
                         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
                             <span style="font-weight:600;color:var(--cyan);font-family:var(--font-mono);font-size:0.85rem">${p.ip}</span>
                             ${hostLabel ? `<span style="color:var(--green);font-size:0.75rem;font-weight:500">${this._escapeHtml(hostLabel)}</span>` : ''}
-                            ${osLabel}${macLabel}
+                            ${osLabel}${macLabel}${interceptedTag}
                         </div>
                         <div style="display:flex;gap:12px;align-items:center">
-                            <span style="font-size:0.7rem;color:var(--text-muted)" title="DNS queries">🔍 ${p.dns_count || 0}</span>
-                            <span style="font-size:0.7rem;color:var(--text-muted)" title="TLS SNI captures">🔒 ${p.sni_count || 0}</span>
+                            <span style="font-size:0.7rem;color:var(--text-muted)" title="DNS resolved domains">🌍 ${p.domains_resolved || 0}</span>
                             <span style="font-size:0.7rem;color:var(--text-muted)">${this._formatBytes(p.data_volume)}</span>
                         </div>
                     </div>
+                    ${adultWarning}
+                    ${catHtml}
                     ${p.sites_visited.length > 0 ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">${sitesHtml}</div>` : ''}
-                    ${urlsHtml}${uaHtml}${svcsHtml}
+                    ${urlsHtml}${uaHtml}${svcsHtml}${timelineHtml}
                 </div>
             `;
         }).join('');
+    },
+
+    _renderActivityFeed(feed) {
+        const container = document.getElementById('activity-feed-container');
+        const count = document.getElementById('feed-count');
+        const dot = document.getElementById('feed-live-dot');
+        if (!container) return;
+
+        if (dot) dot.style.display = feed.length > 0 ? 'inline-block' : 'none';
+        if (count) count.textContent = `${feed.length} events`;
+
+        if (!feed.length) {
+            container.innerHTML = '<div class="intel-empty" style="padding:20px">Waiting for network activity...</div>';
+            return;
+        }
+
+        container.innerHTML = feed.map(f => {
+            const isAdult = f.category === 'adult';
+            const catColor = this._getCategoryColor(f.category);
+            const host = f.hostname ? `${f.ip} (${f.hostname})` : f.ip;
+            const intercepted = f.intercepted ? '⚡ ' : '';
+            return `
+                <div style="padding:4px 8px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;color:${isAdult ? 'var(--red)' : 'var(--text-primary)'};background:${isAdult ? 'rgba(255,59,92,0.05)' : 'transparent'}">
+                    <span style="color:var(--text-muted);font-size:0.68rem;min-width:60px">[${this._formatTimestamp(f.timestamp)}]</span>
+                    <span style="color:var(--cyan);min-width:120px">${intercepted}${this._escapeHtml(host)}</span>
+                    <span style="color:var(--text-muted)">→</span>
+                    <span style="flex:1;${isAdult ? 'font-weight:600' : ''}">${this._escapeHtml(f.domain)}</span>
+                    ${f.category ? `<span style="font-size:0.65rem;padding:1px 6px;border-radius:4px;background:${catColor}20;color:${catColor}">${f.category.toUpperCase()}</span>` : ''}
+                    <span style="font-size:0.65rem;color:var(--text-muted);min-width:30px;text-align:right">${f.protocol}</span>
+                </div>
+            `;
+        }).join('');
+    },
+
+    _getCategoryColor(category) {
+        const colors = {
+            'adult': 'var(--red)',
+            'social_media': 'var(--cyan)',
+            'streaming': '#e1b12c',
+            'gaming': '#9c88ff',
+            'news': 'var(--text-secondary)',
+            'finance': 'var(--green)',
+            'shopping': '#e84118',
+            'vpn_proxy': 'var(--orange)',
+            'productivity': '#0097e6',
+            'email': '#8c7ae6',
+            'cloud_storage': '#00a8ff'
+        };
+        return colors[category] || 'var(--text-muted)';
     },
 
     async _loadPackets() {
