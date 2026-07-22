@@ -13,6 +13,9 @@ const SnifferPage = {
     _knownIps: new Set(),
     _lastPacketId: null,
     _localIp: '',
+    _trafficSort: { col: 'data_volume', dir: 'desc' },
+    _trafficData: [],
+    _expandedIps: new Set(),
 
     title: 'Sniffer',
     subtitle: 'Passive network traffic capture & intelligence',
@@ -78,6 +81,36 @@ const SnifferPage = {
                     </div>
                     <div id="mitm-targets" style="display:flex;flex-wrap:wrap;gap:6px;max-height:120px;overflow-y:auto">
                         <span style="color:var(--text-muted);font-size:0.78rem">Click "Scan Network" to discover devices on your subnet for interception.</span>
+                    </div>
+                </div>
+
+                <!-- LIVE TRAFFIC BY IP TABLE -->
+                <div class="card" style="margin-bottom:16px">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                        <span style="font-weight:600;font-size:0.9rem;display:flex;align-items:center;gap:8px">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2" style="width:18px;height:18px">
+                                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                            </svg>
+                            <span style="color:var(--green)">LIVE TRAFFIC BY IP</span>
+                            <span id="traffic-ip-count" style="color:var(--text-muted);font-size:0.72rem;font-weight:400"></span>
+                        </span>
+                    </div>
+                    <div id="traffic-table-container" style="max-height:420px;overflow-y:auto">
+                        <table style="width:100%;border-collapse:collapse;font-size:0.78rem" id="traffic-table">
+                            <thead>
+                                <tr style="border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-card);z-index:1">
+                                    <th onclick="SnifferPage.sortTrafficBy('rank')" style="text-align:left;padding:6px 8px;color:var(--text-muted);font-weight:600;font-size:0.7rem;text-transform:uppercase;cursor:pointer;user-select:none;white-space:nowrap" id="th-rank"># <span class="sort-arrow"></span></th>
+                                    <th onclick="SnifferPage.sortTrafficBy('ip')" style="text-align:left;padding:6px 8px;color:var(--text-muted);font-weight:600;font-size:0.7rem;text-transform:uppercase;cursor:pointer;user-select:none;white-space:nowrap" id="th-ip">IP Address <span class="sort-arrow"></span></th>
+                                    <th onclick="SnifferPage.sortTrafficBy('hostname')" style="text-align:left;padding:6px 8px;color:var(--text-muted);font-weight:600;font-size:0.7rem;text-transform:uppercase;cursor:pointer;user-select:none;white-space:nowrap" id="th-hostname">Hostname <span class="sort-arrow"></span></th>
+                                    <th onclick="SnifferPage.sortTrafficBy('data_volume')" style="text-align:right;padding:6px 8px;color:var(--text-muted);font-weight:600;font-size:0.7rem;text-transform:uppercase;cursor:pointer;user-select:none;white-space:nowrap" id="th-data_volume">Traffic <span class="sort-arrow"></span></th>
+                                    <th style="text-align:left;padding:6px 8px;color:var(--text-muted);font-weight:600;font-size:0.7rem;text-transform:uppercase;white-space:nowrap">Top Sites</th>
+                                    <th onclick="SnifferPage.sortTrafficBy('intercepted')" style="text-align:center;padding:6px 8px;color:var(--text-muted);font-weight:600;font-size:0.7rem;text-transform:uppercase;cursor:pointer;user-select:none;white-space:nowrap" id="th-intercepted">Status <span class="sort-arrow"></span></th>
+                                </tr>
+                            </thead>
+                            <tbody id="traffic-table-body">
+                                <tr><td colspan="6" style="padding:20px;text-align:center;color:var(--text-muted);font-style:italic">Start the sniffer to see live traffic per IP...</td></tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
 
@@ -492,6 +525,154 @@ const SnifferPage = {
         } catch (e) { /* ignore */ }
     },
 
+    async _pollTrafficTable() {
+        try {
+            const resp = await fetch('/api/mitm/activity');
+            const data = await resp.json();
+
+            const countEl = document.getElementById('traffic-ip-count');
+            const entries = data.entries || [];
+            if (countEl) countEl.textContent = `${entries.length} IPs active`;
+
+            this._trafficData = entries;
+            this._renderTrafficTable();
+
+        } catch (e) { /* ignore */ }
+    },
+
+    sortTrafficBy(col) {
+        if (this._trafficSort.col === col) {
+            this._trafficSort.dir = this._trafficSort.dir === 'asc' ? 'desc' : 'asc';
+        } else {
+            this._trafficSort.col = col;
+            // Default directions: traffic desc, rest asc
+            this._trafficSort.dir = (col === 'data_volume' || col === 'rank') ? 'desc' : 'asc';
+        }
+        this._renderTrafficTable();
+    },
+
+    _renderTrafficTable() {
+        const tbody = document.getElementById('traffic-table-body');
+        if (!tbody) return;
+
+        let entries = [...this._trafficData];
+
+        if (entries.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--text-muted);font-style:italic">No traffic detected yet...</td></tr>';
+            this._updateSortArrows();
+            return;
+        }
+
+        // Sort
+        const { col, dir } = this._trafficSort;
+        entries.sort((a, b) => {
+            let va = a[col], vb = b[col];
+            if (col === 'ip') {
+                // Numeric IP sort
+                const toNum = ip => ip.split('.').reduce((acc, oct) => (acc << 8) + parseInt(oct), 0);
+                va = toNum(va || '0.0.0.0');
+                vb = toNum(vb || '0.0.0.0');
+            } else if (typeof va === 'string') {
+                va = (va || '').toLowerCase();
+                vb = (vb || '').toLowerCase();
+            } else if (typeof va === 'boolean') {
+                va = va ? 1 : 0;
+                vb = vb ? 1 : 0;
+            }
+            if (va < vb) return dir === 'asc' ? -1 : 1;
+            if (va > vb) return dir === 'asc' ? 1 : -1;
+            return 0;
+        });
+
+        // Re-rank after sort
+        entries.forEach((e, i) => e._displayRank = i + 1);
+
+        tbody.innerHTML = entries.map(e => {
+            const rank = e._displayRank;
+            const rankColor = rank <= 3 ? 'var(--orange)' : 'var(--text-muted)';
+            const rankWeight = rank <= 3 ? '700' : '400';
+            const ipColor = e.intercepted ? 'var(--red)' : 'var(--cyan)';
+            const badge = e.intercepted
+                ? '<span style="display:inline-block;padding:1px 6px;border-radius:4px;background:rgba(255,59,92,0.2);color:var(--red);font-size:0.6rem;font-weight:600">INTERCEPTED</span>'
+                : '<span style="display:inline-block;padding:1px 6px;border-radius:4px;background:rgba(0,209,178,0.1);color:var(--green);font-size:0.6rem;font-weight:500">PASSIVE</span>';
+
+            const sites = (e.top_sites || []).map(s =>
+                `<span style="color:var(--text-secondary);font-size:0.7rem" title="${s.hits} hits">${s.domain}</span>`
+            ).join('<span style="color:var(--border);margin:0 3px">·</span>');
+
+            const hostname = e.hostname
+                ? `<span style="color:var(--green);font-size:0.72rem">${e.hostname}</span>`
+                : `<span style="color:var(--text-muted);font-size:0.72rem;font-style:italic">—</span>`;
+
+            const isExpanded = this._expandedIps.has(e.ip);
+            const chevron = isExpanded ? '▾' : '▸';
+            const allSites = e.all_sites || [];
+            const hasSites = allSites.length > 0;
+
+            let expandRow = '';
+            if (isExpanded && hasSites) {
+                const siteRows = allSites.map((s, i) => `
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:3px 12px;${i > 0 ? 'border-top:1px solid var(--border)' : ''}">
+                        <span style="color:var(--text-secondary);font-size:0.72rem;font-family:var(--font-mono)">${s.domain}</span>
+                        <span style="color:var(--text-muted);font-size:0.68rem;font-family:var(--font-mono);min-width:45px;text-align:right">${s.hits}×</span>
+                    </div>
+                `).join('');
+                expandRow = `
+                    <tr class="traffic-expand-row">
+                        <td colspan="6" style="padding:0;background:var(--bg-deep);border-bottom:1px solid var(--border)">
+                            <div style="max-height:180px;overflow-y:auto;padding:4px 0;margin-left:30px;border-left:2px solid var(--cyan)">
+                                <div style="padding:3px 12px;color:var(--cyan);font-size:0.68rem;font-weight:600;text-transform:uppercase">Sites accessed (${allSites.length})</div>
+                                ${siteRows}
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }
+
+            return `
+                <tr style="border-bottom:${isExpanded ? 'none' : '1px solid var(--border)'};transition:background 0.15s;${hasSites ? 'cursor:pointer' : ''}" 
+                    onclick="SnifferPage.toggleTrafficRow('${e.ip}')" 
+                    onmouseenter="this.style.background='var(--bg-deep)'" 
+                    onmouseleave="this.style.background='transparent'">
+                    <td style="padding:6px 8px;font-family:var(--font-mono);color:${rankColor};font-weight:${rankWeight};font-size:0.75rem">${hasSites ? '<span style="color:var(--text-muted);font-size:0.7rem;margin-right:2px">' + chevron + '</span>' : ''}${rank}</td>
+                    <td style="padding:6px 8px;font-family:var(--font-mono);color:${ipColor};font-weight:500">${e.ip}</td>
+                    <td style="padding:6px 8px">${hostname}</td>
+                    <td style="padding:6px 8px;text-align:right;font-family:var(--font-mono);color:var(--text-primary);font-weight:500">${e.data_volume_formatted}</td>
+                    <td style="padding:6px 8px">${sites || '<span style="color:var(--text-muted);font-size:0.7rem">—</span>'}</td>
+                    <td style="padding:6px 8px;text-align:center">${badge}</td>
+                </tr>
+                ${expandRow}
+            `;
+        }).join('');
+
+        this._updateSortArrows();
+    },
+
+    toggleTrafficRow(ip) {
+        if (this._expandedIps.has(ip)) {
+            this._expandedIps.delete(ip);
+        } else {
+            this._expandedIps.add(ip);
+        }
+        this._renderTrafficTable();
+    },
+
+    _updateSortArrows() {
+        const cols = ['rank', 'ip', 'hostname', 'data_volume', 'intercepted'];
+        for (const c of cols) {
+            const th = document.getElementById('th-' + c);
+            if (!th) continue;
+            const arrow = th.querySelector('.sort-arrow');
+            if (!arrow) continue;
+            if (this._trafficSort.col === c) {
+                arrow.textContent = this._trafficSort.dir === 'asc' ? ' ▲' : ' ▼';
+                arrow.style.color = 'var(--cyan)';
+            } else {
+                arrow.textContent = '';
+            }
+        }
+    },
+
     clearConsole() {
         const consoleEl = document.getElementById('sniff-console');
         if (consoleEl) {
@@ -697,8 +878,9 @@ const SnifferPage = {
             // Update Network Intelligence panels
             this._updateIntel(stats);
 
-            // Poll MITM status
+            // Poll MITM status and traffic table
             this._pollMitmStatus();
+            this._pollTrafficTable();
         } catch (e) { /* retry */ }
     },
 
@@ -737,13 +919,17 @@ const SnifferPage = {
         // ── DNS Queries ──────────────────────────────────
         const dnsEl = document.getElementById('intel-dns');
         if (dnsEl && stats.dns_queries && stats.dns_queries.length > 0) {
-            const sorted = [...stats.dns_queries].sort((a, b) => b[1] - a[1]);
-            dnsEl.innerHTML = sorted.slice(0, 25).map(([domain, count]) => `
-                <div class="intel-row intel-row-dns">
-                    <span class="intel-dns-domain">${this._escapeHtml(domain)}</span>
-                    <span class="intel-dns-count">${count}×</span>
-                </div>
-            `).join('');
+            const sorted = [...stats.dns_queries]
+                .filter(([domain]) => !domain.endsWith('.arpa'))
+                .sort((a, b) => b[1] - a[1]);
+            if (sorted.length > 0) {
+                dnsEl.innerHTML = sorted.slice(0, 25).map(([domain, count]) => `
+                    <div class="intel-row intel-row-dns">
+                        <span class="intel-dns-domain">${this._escapeHtml(domain)}</span>
+                        <span class="intel-dns-count">${count}×</span>
+                    </div>
+                `).join('');
+            }
         }
 
         // ── Top Talkers ──────────────────────────────────

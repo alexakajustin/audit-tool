@@ -98,30 +98,110 @@ def mitm_start_all():
 @mitm_bp.route("/api/mitm/activity", methods=["GET"])
 def mitm_activity():
     """
-    Get per-target browsing activity summary.
-    Returns device profiles for only MITM-intercepted IPs.
+    Get per-IP traffic activity summary.
+    Returns ALL IPs generating traffic, ranked by data volume,
+    with intercepted IPs flagged. Includes hostname, top domains,
+    and packet counts.
     """
     if not api.arp_spoofer:
         return jsonify({"error": "ARP Spoofer not available"}), 503
 
+    # Get MITM status for intercepted IPs
     status = api.arp_spoofer.get_status()
-    target_ips = [t["ip"] for t in status.get("targets", [])]
+    intercepted_ips = set(t["ip"] for t in status.get("targets", []))
 
-    if not target_ips:
-        return jsonify({"targets": [], "profiles": []})
-
-    # Get device profiles from sniffer for intercepted IPs only
-    profiles = []
+    # Get all traffic data from sniffer
+    traffic_entries = []
     if api.sniffer:
         stats = api.sniffer.get_stats()
-        for profile in stats.get("device_profiles", []):
-            if profile.get("ip") in target_ips:
-                profiles.append(profile)
+        device_profiles = stats.get("device_profiles", [])
+        top_talkers = stats.get("top_talkers", [])
+        local_ip = stats.get("local_ip", "")
+
+        # Build a lookup from device profiles for rich data
+        profile_map = {}
+        for profile in device_profiles:
+            profile_map[profile.get("ip", "")] = profile
+
+        # Use top_talkers as the ranked source (already sorted by volume)
+        seen_ips = set()
+        for ip, bytes_val in top_talkers:
+            if ip == local_ip:
+                continue
+            seen_ips.add(ip)
+            prof = profile_map.get(ip, {})
+
+            # Get sites visited, filtering out reverse DNS (.arpa) noise
+            all_sites = _filter_arpa(prof.get("sites_visited", []))
+            top_sites = [{"domain": s[0], "hits": s[1]} for s in all_sites[:3]]
+            all_sites_list = [{"domain": s[0], "hits": s[1]} for s in all_sites[:30]]
+
+            traffic_entries.append({
+                "ip": ip,
+                "hostname": prof.get("hostname", ""),
+                "mac": prof.get("mac", ""),
+                "data_volume": bytes_val,
+                "data_volume_formatted": _format_bytes(bytes_val),
+                "dns_count": prof.get("dns_count", 0),
+                "sni_count": prof.get("sni_count", 0),
+                "top_sites": top_sites,
+                "all_sites": all_sites_list,
+                "os": prof.get("os", ""),
+                "intercepted": ip in intercepted_ips,
+                "services": prof.get("services", []),
+            })
+
+        # Also include any profiled devices not in top_talkers
+        for prof in device_profiles:
+            ip = prof.get("ip", "")
+            if ip in seen_ips or ip == local_ip:
+                continue
+            seen_ips.add(ip)
+            vol = prof.get("data_volume", 0)
+            all_sites = _filter_arpa(prof.get("sites_visited", []))
+            top_sites = [{"domain": s[0], "hits": s[1]} for s in all_sites[:3]]
+            all_sites_list = [{"domain": s[0], "hits": s[1]} for s in all_sites[:30]]
+
+            traffic_entries.append({
+                "ip": ip,
+                "hostname": prof.get("hostname", ""),
+                "mac": prof.get("mac", ""),
+                "data_volume": vol,
+                "data_volume_formatted": _format_bytes(vol),
+                "dns_count": prof.get("dns_count", 0),
+                "sni_count": prof.get("sni_count", 0),
+                "top_sites": top_sites,
+                "all_sites": all_sites_list,
+                "os": prof.get("os", ""),
+                "intercepted": ip in intercepted_ips,
+                "services": prof.get("services", []),
+            })
+
+    # Sort by data volume descending, add rank numbers
+    traffic_entries.sort(key=lambda e: e["data_volume"], reverse=True)
+    for i, entry in enumerate(traffic_entries):
+        entry["rank"] = i + 1
 
     return jsonify({
-        "targets": target_ips,
-        "target_count": len(target_ips),
-        "profiles": profiles,
+        "targets": list(intercepted_ips),
+        "target_count": len(intercepted_ips),
+        "entries": traffic_entries,
+        "total_ips": len(traffic_entries),
         "is_running": status.get("is_running", False),
         "packets_sent": status.get("packets_sent", 0),
     })
+
+
+def _format_bytes(num: float) -> str:
+    """Format byte count into human-readable string."""
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if num < 1024.0:
+            return f"{num:.1f} {unit}"
+        num /= 1024.0
+    return f"{num:.1f} TB"
+
+
+def _filter_arpa(sites: list) -> list:
+    """Filter out reverse DNS entries (in-addr.arpa, ip6.arpa) from site lists."""
+    return [s for s in sites if not s[0].endswith('.arpa')]
+
