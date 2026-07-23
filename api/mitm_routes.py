@@ -98,10 +98,8 @@ def mitm_start_all():
 @mitm_bp.route("/api/mitm/activity", methods=["GET"])
 def mitm_activity():
     """
-    Get per-IP traffic activity summary.
-    Returns ALL IPs generating traffic, ranked by data volume,
-    with intercepted IPs flagged. Includes hostname, top domains,
-    and packet counts.
+    Get per-IP traffic activity summary for local network devices.
+    Returns local LAN devices ranked by data volume, with site profiles.
     """
     if not api.arp_spoofer:
         return jsonify({"error": "ARP Spoofer not available"}), 503
@@ -110,61 +108,28 @@ def mitm_activity():
     status = api.arp_spoofer.get_status()
     intercepted_ips = set(t["ip"] for t in status.get("targets", []))
 
-    # Get all traffic data from sniffer
+    # Get traffic data from sniffer
     traffic_entries = []
     if api.sniffer:
         stats = api.sniffer.get_stats()
         device_profiles = stats.get("device_profiles", [])
-        top_talkers = stats.get("top_talkers", [])
         local_ip = stats.get("local_ip", "")
 
-        # Build a lookup from device profiles for rich data
-        profile_map = {}
-        for profile in device_profiles:
-            profile_map[profile.get("ip", "")] = profile
-
-        # Use top_talkers as the ranked source (already sorted by volume)
-        seen_ips = set()
-        for ip, bytes_val in top_talkers:
-            if ip == local_ip:
-                continue
-            seen_ips.add(ip)
-            prof = profile_map.get(ip, {})
-
-            # Get sites visited, filtering out reverse DNS (.arpa) noise
-            all_sites = _filter_arpa(prof.get("sites_visited", []))
-            top_sites = [{"domain": s[0], "hits": s[1]} for s in all_sites[:3]]
-            all_sites_list = [{"domain": s[0], "hits": s[1]} for s in all_sites[:30]]
-
-            traffic_entries.append({
-                "ip": ip,
-                "hostname": prof.get("hostname", ""),
-                "mac": prof.get("mac", ""),
-                "data_volume": bytes_val,
-                "data_volume_formatted": _format_bytes(bytes_val),
-                "dns_count": prof.get("dns_count", 0),
-                "sni_count": prof.get("sni_count", 0),
-                "top_sites": top_sites,
-                "all_sites": all_sites_list,
-                "os": prof.get("os", ""),
-                "intercepted": ip in intercepted_ips,
-                "services": prof.get("services", []),
-            })
-
-        # Also include any profiled devices not in top_talkers
         for prof in device_profiles:
             ip = prof.get("ip", "")
-            if ip in seen_ips or ip == local_ip:
+            if not ip or ip == local_ip:
                 continue
-            seen_ips.add(ip)
+
             vol = prof.get("data_volume", 0)
             all_sites = _filter_arpa(prof.get("sites_visited", []))
             top_sites = [{"domain": s[0], "hits": s[1]} for s in all_sites[:3]]
             all_sites_list = [{"domain": s[0], "hits": s[1]} for s in all_sites[:30]]
 
+            hostname = prof.get("hostname", "")
+
             traffic_entries.append({
                 "ip": ip,
-                "hostname": prof.get("hostname", ""),
+                "hostname": hostname,
                 "mac": prof.get("mac", ""),
                 "data_volume": vol,
                 "data_volume_formatted": _format_bytes(vol),
@@ -173,7 +138,8 @@ def mitm_activity():
                 "top_sites": top_sites,
                 "all_sites": all_sites_list,
                 "os": prof.get("os", ""),
-                "intercepted": ip in intercepted_ips,
+                "intercepted": ip in intercepted_ips or prof.get("intercepted", False),
+                "is_local_pc": ip == local_ip,
                 "services": prof.get("services", []),
             })
 

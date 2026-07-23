@@ -253,37 +253,40 @@ class MetricsManager:
             pdf.cell(0, 8, "Asset & Device Inventory Overview", ln=True)
             pdf.ln(2)
             
-            pdf.set_font("helvetica", "B", 9)
-            pdf.set_fill_color(240, 243, 248)
-            pdf.set_text_color(*c_dark_navy)
-            pdf.cell(65, 7, " Metric", border="B", fill=True)
-            pdf.cell(125, 7, " Value", border="B", fill=True, ln=True)
-            
-            pdf.set_font("helvetica", "", 9)
-            pdf.set_text_color(*c_text_dark)
-            
-            total_devs = inv_stats.get("total_devices", 0)
-            online_devs = inv_stats.get("online_devices", 0)
-            offline_devs = inv_stats.get("offline_devices", 0)
-            total_ports = inv_stats.get("total_open_ports", 0)
-            
-            pdf.cell(65, 7, " Total Devices Discovered", border="B")
-            pdf.cell(125, 7, f" {total_devs} (Online: {online_devs} / Offline: {offline_devs})", border="B", ln=True)
-            
-            pdf.cell(65, 7, " Total Open Ports Detected", border="B")
-            pdf.cell(125, 7, f" {total_ports}", border="B", ln=True)
-            
-            os_dist = inv_stats.get("os_distribution", {})
-            if os_dist:
-                os_str = ", ".join(f"{k} ({v})" for k, v in list(os_dist.items())[:5])
-                pdf.cell(65, 7, " Top Operating Systems", border="B")
-                pdf.cell(125, 7, f" {os_str}", border="B", ln=True)
+            with pdf.table(borders_layout="HORIZONTAL_LINES", text_align="LEFT", col_widths=(65, 125)) as summary_table:
+                pdf.set_font("helvetica", "B", 9)
+                row = summary_table.row()
+                row.cell("Metric")
+                row.cell("Value")
                 
-            vendor_dist = inv_stats.get("vendor_distribution", {})
-            if vendor_dist:
-                v_str = ", ".join(f"{k} ({v})" for k, v in list(vendor_dist.items())[:5])
-                pdf.cell(65, 7, " Top Hardware Vendors", border="B")
-                pdf.cell(125, 7, f" {v_str}", border="B", ln=True)
+                pdf.set_font("helvetica", "", 9)
+                
+                total_devs = inv_stats.get("total_devices", 0)
+                online_devs = inv_stats.get("online_devices", 0)
+                offline_devs = inv_stats.get("offline_devices", 0)
+                total_ports = inv_stats.get("total_open_ports", 0)
+                
+                row = summary_table.row()
+                row.cell("Total Devices Discovered")
+                row.cell(f"{total_devs} (Online: {online_devs} / Offline: {offline_devs})")
+                
+                row = summary_table.row()
+                row.cell("Total Open Ports Detected")
+                row.cell(f"{total_ports}")
+                
+                os_dist = inv_stats.get("os_distribution", {})
+                if os_dist:
+                    os_str = ", ".join(f"{k} ({v})" for k, v in list(os_dist.items())[:5])
+                    row = summary_table.row()
+                    row.cell("Top Operating Systems")
+                    row.cell(os_str)
+                    
+                vendor_dist = inv_stats.get("vendor_distribution", {})
+                if vendor_dist:
+                    v_str = ", ".join(f"{k} ({v})" for k, v in list(vendor_dist.items())[:5])
+                    row = summary_table.row()
+                    row.cell("Top Hardware Vendors")
+                    row.cell(v_str)
             pdf.ln(8)
 
             # ── Detailed Device List ──
@@ -368,7 +371,7 @@ class MetricsManager:
             pdf.ln(8)
 
         # ── Top DNS Queries ──
-        dns_queries = raw_stats.get("dns_queries", [])
+        dns_queries = [d for d in raw_stats.get("dns_queries", []) if not str(d[0]).endswith(".arpa")]
         if dns_queries:
             pdf.set_font("helvetica", "B", 12)
             pdf.set_text_color(*c_dark_navy)

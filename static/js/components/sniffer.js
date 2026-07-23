@@ -935,19 +935,21 @@ const SnifferPage = {
         // ── Top Talkers ──────────────────────────────────
         const talkersEl = document.getElementById('intel-talkers');
         if (talkersEl && stats.top_talkers && stats.top_talkers.length > 0) {
-            const maxVol = stats.top_talkers[0][1];
-            talkersEl.innerHTML = stats.top_talkers.slice(0, 15).map(([ip, bytes]) => {
-                const isLocal = ip === this._localIp;
-                const pct = (bytes / maxVol * 100).toFixed(0);
-                return `
-                <div class="intel-row" style="gap:8px;${isLocal ? 'opacity:0.4' : ''}">
-                    <span class="mono" style="min-width:120px;color:${isLocal ? 'var(--orange)' : 'var(--cyan)'};font-size:0.78rem">${ip}${isLocal ? ' (you)' : ''}</span>
-                    <div style="flex:1;height:4px;background:var(--bg-deep);border-radius:2px;overflow:hidden">
-                        <div style="width:${pct}%;height:100%;background:${isLocal ? 'var(--orange)' : 'var(--green)'};border-radius:2px"></div>
-                    </div>
-                    <span style="min-width:70px;text-align:right;font-size:0.75rem;color:var(--text-muted);font-family:var(--font-mono)">${this._formatBytes(bytes)}</span>
-                </div>`;
-            }).join('');
+            const filteredTalkers = stats.top_talkers.filter(([ip]) => ip !== this._localIp);
+            if (filteredTalkers.length > 0) {
+                const maxVol = filteredTalkers[0][1];
+                talkersEl.innerHTML = filteredTalkers.slice(0, 15).map(([ip, bytes]) => {
+                    const pct = (bytes / maxVol * 100).toFixed(0);
+                    return `
+                    <div class="intel-row" style="gap:8px">
+                        <span class="mono" style="min-width:120px;color:var(--cyan);font-size:0.78rem">${ip}</span>
+                        <div style="flex:1;height:4px;background:var(--bg-deep);border-radius:2px;overflow:hidden">
+                            <div style="width:${pct}%;height:100%;background:var(--green);border-radius:2px"></div>
+                        </div>
+                        <span style="min-width:70px;text-align:right;font-size:0.75rem;color:var(--text-muted);font-family:var(--font-mono)">${this._formatBytes(bytes)}</span>
+                    </div>`;
+                }).join('');
+            }
         }
 
         // ── Services Detected ────────────────────────────

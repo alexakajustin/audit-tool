@@ -50,6 +50,7 @@ class PassiveSniffer(BaseSniffer):
         self._dhcp_servers: set[str] = set()                       # Set of detected DHCP servers
         self._tcp_syn_scans: dict[str, set[int]] = {}              # IP -> set of destination ports scanned
         self._alerts_triggered: set[str] = set()                   # Avoid duplicate alerts for the same event
+        self._dns_pending_queries: dict[str, str] = {}              # (dns_txid:dst_ip) -> querier IP for response attribution
 
         # ── Per-device Deep Activity Profiling ───────────────
         self._device_dns: dict[str, OrderedDict] = {}              # IP -> {domain: count}  (DNS queries per device)
@@ -152,9 +153,9 @@ class PassiveSniffer(BaseSniffer):
 
     def get_stats(self) -> dict:
         with self._lock:
-            # Top DNS queries (most popular domains being browsed)
-            dns_top = list(self._dns_queries.items())[-50:]
-            dns_top.sort(key=lambda x: x[1], reverse=True)
+            # Top DNS queries (most popular domains being browsed, excluding .arpa reverse DNS)
+            dns_filtered = [(k, v) for k, v in self._dns_queries.items() if not k.endswith(".arpa")]
+            dns_top = sorted(dns_filtered, key=lambda x: x[1], reverse=True)[:50]
 
             # Security alerts (last 20)
             alerts = self._security_alerts[-20:]
@@ -164,8 +165,9 @@ class PassiveSniffer(BaseSniffer):
             for ip, svcs in self._services_seen.items():
                 services_summary[ip] = list(svcs)
 
-            # Data volume top talkers
-            vol_sorted = sorted(self._data_volume.items(), key=lambda x: x[1], reverse=True)[:20]
+            # Data volume top talkers (only local LAN hosts)
+            vol_filtered = {ip: vol for ip, vol in self._data_volume.items() if self._is_local_lan_ip(ip)}
+            vol_sorted = sorted(vol_filtered.items(), key=lambda x: x[1], reverse=True)[:20]
 
             # Host connections (who talks to whom)
             connections = {}
@@ -233,6 +235,25 @@ class PassiveSniffer(BaseSniffer):
                 }
             return result
 
+    def _is_local_lan_ip(self, ip: str) -> bool:
+        """Check if an IP address belongs to a local LAN device (excluding the auditor's own PC)."""
+        if not ip or ip == "0.0.0.0" or ip == "255.255.255.255" or ip.endswith(".255"):
+            return False
+        if self._local_ip and ip == self._local_ip:
+            return False
+        try:
+            import ipaddress
+            ip_obj = ipaddress.ip_address(ip)
+            if ip_obj.is_loopback or ip_obj.is_multicast or ip_obj.is_unspecified or ip_obj.is_reserved or ip_obj.is_link_local:
+                return False
+            if ip_obj.is_private:
+                return True
+            if ip in self._ip_to_mac or ip in self._intercepted_ips or ip in self._mac_to_ip:
+                return True
+        except Exception:
+            pass
+        return False
+
     def _build_device_profiles(self) -> list[dict]:
         """Build per-device activity profiles (called inside lock)."""
         profiles = []
@@ -241,27 +262,40 @@ class PassiveSniffer(BaseSniffer):
         all_ips.update(self._device_sni.keys())
         all_ips.update(self._device_http_hosts.keys())
         all_ips.update(self._data_volume.keys())
+        all_ips.update(self._intercepted_ips)
 
-        for ip in sorted(all_ips):
+        # Filter: Keep ONLY local LAN device IPs (excluding the auditor's own local_ip)
+        local_ips = [ip for ip in all_ips if self._is_local_lan_ip(ip) and ip != self._local_ip]
+
+        for ip in sorted(local_ips):
             # Combine DNS + SNI + HTTP into unified browsing list
             sites = OrderedDict()
             # SNI is the richest source (HTTPS domains)
             for domain, count in self._device_sni.get(ip, {}).items():
-                sites[domain] = sites.get(domain, 0) + count
+                if not domain.endswith('.arpa'):
+                    sites[domain] = sites.get(domain, 0) + count
             # DNS queries
             for domain, count in self._device_dns.get(ip, {}).items():
-                sites[domain] = sites.get(domain, 0) + count
+                if not domain.endswith('.arpa'):
+                    sites[domain] = sites.get(domain, 0) + count
             # HTTP hosts
             for host in self._device_http_hosts.get(ip, set()):
-                sites[host] = sites.get(host, 0) + 1
+                if not host.endswith('.arpa'):
+                    sites[host] = sites.get(host, 0) + 1
 
             # Sort by count descending
             sorted_sites = sorted(sites.items(), key=lambda x: x[1], reverse=True)
 
+            hostname = self._device_hostnames.get(ip, "")
+            if not hostname and ip in self._dns_reverse:
+                rev = self._dns_reverse[ip]
+                if not rev.endswith('.arpa'):
+                    hostname = rev
+
             profile = {
                 "ip": ip,
-                "hostname": self._device_hostnames.get(ip, ""),
-                "mac": self._ip_to_mac.get(ip, ""),
+                "hostname": hostname,
+                "mac": self._ip_to_mac.get(ip, "") or self._mac_to_ip.get(ip, ""),
                 "os": self._device_os.get(ip, ""),
                 "user_agents": list(self._device_user_agents.get(ip, set()))[:5],
                 "data_volume": self._data_volume.get(ip, 0),
@@ -278,13 +312,13 @@ class PassiveSniffer(BaseSniffer):
                 "timeline": self._device_timeline.get(ip, [])[-50:],
                 "domains_resolved": len(self._device_dns.get(ip, {})),
             }
-            # Only include devices with some activity
-            if profile["sites_visited"] or profile["data_volume"] > 0:
+            # Only include devices with activity or intercepted
+            if profile["sites_visited"] or profile["data_volume"] > 0 or profile["intercepted"]:
                 profiles.append(profile)
 
         # Sort by data volume descending
         profiles.sort(key=lambda p: p["data_volume"], reverse=True)
-        return profiles[:30]
+        return profiles[:50]
 
     def _build_global_category_summary(self) -> dict:
         """Aggregate content categories across all devices (called inside lock)."""
@@ -670,17 +704,26 @@ class PassiveSniffer(BaseSniffer):
 
                 info = self._parse_packet(pkt)
                 if info:
+                    # Ignore host PC's own local traffic for auditing metrics
+                    is_host_traffic = (
+                        (self._local_ip and (info.src == self._local_ip or info.dst == self._local_ip))
+                        or info.src == "127.0.0.1"
+                        or info.dst == "127.0.0.1"
+                    )
+
                     with self._lock:
                         self._packets.append(info)
                         self._raw_packets.append(pkt)
-                        self._stats[info.protocol] = self._stats.get(info.protocol, 0) + 1
-                        if info.src:
-                            self._unique_hosts.add(info.src)
-                        if info.dst:
-                            self._unique_hosts.add(info.dst)
 
-                        # ── Track network intelligence ──────────
-                        self._track_intelligence(pkt, info)
+                        if not is_host_traffic:
+                            self._stats[info.protocol] = self._stats.get(info.protocol, 0) + 1
+                            if info.src:
+                                self._unique_hosts.add(info.src)
+                            if info.dst:
+                                self._unique_hosts.add(info.dst)
+
+                            # ── Track network intelligence for network devices ──
+                            self._track_intelligence(pkt, info)
 
                     if self._on_packet:
                         try:
@@ -712,10 +755,10 @@ class PassiveSniffer(BaseSniffer):
         try:
             from scapy.all import IP, TCP, UDP, DNS, Ether, Raw
 
-            # Track data volume per host
-            if info.src:
+            # Track data volume per local host
+            if info.src and self._is_local_lan_ip(info.src):
                 self._data_volume[info.src] = self._data_volume.get(info.src, 0) + info.size
-            if info.dst:
+            if info.dst and self._is_local_lan_ip(info.dst):
                 self._data_volume[info.dst] = self._data_volume.get(info.dst, 0) + info.size
 
             # Track connections (who talks to whom)
@@ -737,16 +780,31 @@ class PassiveSniffer(BaseSniffer):
                         qname = qname.decode("utf-8", errors="ignore")
                     qname = str(qname).rstrip(".")
                     if qname and len(qname) > 3 and "." in qname:
-                        self._dns_queries[qname] = self._dns_queries.get(qname, 0) + 1
-                        # Per-device DNS tracking
                         querier = info.src
-                        if querier:
+                        if querier and querier != self._local_ip:
+                            self._dns_queries[qname] = self._dns_queries.get(qname, 0) + 1
+                            # Per-device DNS tracking
                             if querier not in self._device_dns:
                                 self._device_dns[querier] = OrderedDict()
                             self._device_dns[querier][qname] = self._device_dns[querier].get(qname, 0) + 1
                             # Timeline + Category tracking
                             self._add_timeline_entry(querier, qname, "DNS", "dns_query")
                             self._track_category(querier, qname)
+
+                        # Remember who asked this query so we can attribute the response
+                        try:
+                            txid = dns.id
+                            if txid is not None and info.src:
+                                key = f"{txid}:{info.dst}"  # txid + DNS server = unique query
+                                self._dns_pending_queries[key] = info.src
+                                # Cap size to prevent memory leak
+                                if len(self._dns_pending_queries) > 10000:
+                                    # Remove oldest half
+                                    keys = list(self._dns_pending_queries.keys())
+                                    for k in keys[:5000]:
+                                        del self._dns_pending_queries[k]
+                        except Exception:
+                            pass
 
                 # ── DNS Response Parsing (IP→Domain reverse map) ─────
                 elif dns.qr == 1 and dns.ancount and dns.ancount > 0:
@@ -758,7 +816,28 @@ class PassiveSniffer(BaseSniffer):
                             qn = qn.decode("utf-8", errors="ignore")
                         query_name = str(qn).rstrip(".")
 
+                    # Find the original querier device from pending queries
+                    original_querier = ""
+                    try:
+                        txid = dns.id
+                        if txid is not None:
+                            key = f"{txid}:{info.src}"  # response src = DNS server
+                            original_querier = self._dns_pending_queries.pop(key, "")
+                    except Exception:
+                        pass
+                    # Fallback: the response destination IS the querier
+                    if not original_querier and info.dst and self._is_local_lan_ip(info.dst):
+                        original_querier = info.dst
+
                     if query_name and "." in query_name:
+                        # Credit the resolved domain to the querier device
+                        if original_querier and not query_name.endswith(".arpa"):
+                            if original_querier not in self._device_dns:
+                                self._device_dns[original_querier] = OrderedDict()
+                            # Only add if not already tracked from the query itself
+                            if query_name not in self._device_dns.get(original_querier, {}):
+                                self._device_dns[original_querier][query_name] = 1
+
                         # Parse answer records to map resolved IPs back to the domain
                         try:
                             for i in range(min(dns.ancount, 20)):
