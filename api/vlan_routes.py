@@ -13,7 +13,14 @@ def vlan_status():
     """Get VLAN discovery engine status and all discovered intelligence."""
     if not api.vlan_discovery:
         return jsonify({"error": "VLAN discovery service not initialized"}), 500
-    return jsonify(api.vlan_discovery.get_full_intelligence())
+    
+    # Auto-seed if empty
+    intelligence = api.vlan_discovery.get_full_intelligence()
+    if not intelligence.get("subnets"):
+        api.vlan_discovery._seed_local_network_intelligence()
+        intelligence = api.vlan_discovery.get_full_intelligence()
+        
+    return jsonify(intelligence)
 
 
 @vlan_bp.route("/api/vlans/start", methods=["POST"])
@@ -80,3 +87,20 @@ def list_routes():
     if not api.vlan_discovery:
         return jsonify({"error": "VLAN discovery service not initialized"}), 500
     return jsonify({"routes": api.vlan_discovery.get_routes()})
+
+
+@vlan_bp.route("/api/vlans/findings", methods=["GET"])
+def list_findings():
+    """List all security audit findings from active probes."""
+    if not api.vlan_discovery:
+        return jsonify({"error": "VLAN discovery service not initialized"}), 500
+    return jsonify({"findings": api.vlan_discovery.get_security_findings()})
+
+
+@vlan_bp.route("/api/vlans/probe", methods=["POST"])
+def trigger_probe():
+    """Manually trigger active probe cycle (SNMP, gateway sweep, etc.)."""
+    if not api.vlan_discovery:
+        return jsonify({"error": "VLAN discovery service not initialized"}), 500
+    result = api.vlan_discovery.run_manual_probe()
+    return jsonify(result)

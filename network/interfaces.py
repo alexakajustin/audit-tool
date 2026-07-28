@@ -44,16 +44,11 @@ def get_interfaces() -> list[InterfaceInfo]:
         iface_stat = stats.get(iface_name)
         is_up = iface_stat.isup if iface_stat else False
 
-        # Exclude loopback, virtual, VPN, and software interfaces (but keep if they contain "wi-fi" or "wifi")
-        exclude_keywords = ["vmware", "virtualbox", "vethernet", "zerotier", "vpn", "wsl", "loopback", "host-only", "tap-", "tun-"]
+        # Exclude known virtual/hypervisor adapters unless explicitly Wi-Fi or Ethernet
+        exclude_keywords = ["vmware", "virtualbox", "zerotier", "vpn", "wsl", "loopback", "host-only", "tap-", "tun-"]
         if any(keyword in iface_name.lower() for keyword in exclude_keywords):
-            if "wi-fi" not in iface_name.lower() and "wifi" not in iface_name.lower():
+            if "wi-fi" not in iface_name.lower() and "wifi" not in iface_name.lower() and "ethernet" not in iface_name.lower():
                 continue
-
-        # Keep only physical Ethernet or Wi-Fi adapters
-        include_keywords = ["ethernet", "wi-fi", "wifi", "wireless", "local area connection"]
-        if not any(keyword in iface_name.lower() for keyword in include_keywords):
-            continue
 
         ipv4 = None
         mac = ""
@@ -72,7 +67,11 @@ def get_interfaces() -> list[InterfaceInfo]:
             ipv4_netmask = ipv4.netmask
             is_loopback = ipv4.address.startswith("127.")
 
-        if is_loopback:
+        if is_loopback or not ipv4_address:
+            continue
+
+        # Skip APIPA (169.254.x.x) autoconfiguration addresses if other valid interfaces exist
+        if ipv4_address.startswith("169.254."):
             continue
 
         # Calculate subnet in CIDR notation if IPv4 exists
@@ -100,8 +99,10 @@ def get_interfaces() -> list[InterfaceInfo]:
     gateway = _detect_gateway()
     if gateway:
         for iface in interfaces:
-            net = ipaddress.IPv4Network(iface.subnet, strict=False)
+            if not iface.subnet:
+                continue
             try:
+                net = ipaddress.IPv4Network(iface.subnet, strict=False)
                 if ipaddress.IPv4Address(gateway) in net:
                     iface.gateway = gateway
                     break

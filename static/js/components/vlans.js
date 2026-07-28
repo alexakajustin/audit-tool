@@ -6,7 +6,7 @@ const VLANsPage = {
     _refreshInterval: null,
 
     title: 'VLAN Intelligence',
-    subtitle: 'Cross-network infrastructure discovery via CDP, LLDP, and routing protocols',
+    subtitle: 'Active SNMP/gateway probing + passive CDP/LLDP sniffing (no admin required for probes)',
 
     async render(container) {
         container.innerHTML = `
@@ -20,6 +20,9 @@ const VLANsPage = {
                         </span>
                         <div style="display:flex;gap:12px;align-items:center">
                             <span id="vlan-status-text" style="color:var(--text-muted);font-size:0.8rem">Checking...</span>
+                            <button id="btn-vlan-probe" class="btn btn-sm" onclick="VLANsPage.triggerProbe()" style="background:var(--purple);color:#fff;border:none">
+                                ⚡ Probe Now
+                            </button>
                             <button id="btn-vlan-toggle" class="btn btn-sm btn-success" onclick="VLANsPage.toggleDiscovery()">
                                 Start
                             </button>
@@ -47,8 +50,12 @@ const VLANsPage = {
                             <div class="pd-stat-label">Routes</div>
                         </div>
                         <div class="pd-stat">
+                            <div class="pd-stat-value" id="vlan-stat-findings" style="color:var(--orange)">0</div>
+                            <div class="pd-stat-label">⚠ Findings</div>
+                        </div>
+                        <div class="pd-stat">
                             <div class="pd-stat-value" id="vlan-stat-duration" style="color:var(--text-muted)">0s</div>
-                            <div class="pd-stat-label">Listening</div>
+                            <div class="pd-stat-label">Uptime</div>
                         </div>
                     </div>
                     <!-- Protocol Activity Badges -->
@@ -70,9 +77,9 @@ const VLANsPage = {
                     </div>
                     <div id="switches-container">
                         <div class="empty-state" style="padding:24px">
-                            <p>Listening for CDP / LLDP broadcasts from managed switches...</p>
+                            <p>Discovering routers & switches via SNMP, gateway probes, and CDP/LLDP...</p>
                             <p style="font-size:0.78rem;color:var(--text-muted);margin-top:4px">
-                                Managed switches send CDP/LLDP every 30-60 seconds. Wait for the first broadcast.
+                                Active probes run automatically. SNMP + gateway sweep finds devices without admin rights.
                             </p>
                         </div>
                     </div>
@@ -116,6 +123,26 @@ const VLANsPage = {
                     </div>
                 </div>
 
+                <!-- Security Findings -->
+                <div class="card" style="margin-top:16px">
+                    <div class="card-header">
+                        <span class="card-title">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="var(--orange)" stroke-width="1.5" style="width:18px;height:18px;vertical-align:middle;margin-right:6px">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                                <line x1="12" y1="9" x2="12" y2="13"/>
+                                <line x1="12" y1="17" x2="12.01" y2="17"/>
+                            </svg>
+                            Security Audit Findings
+                        </span>
+                        <span id="findings-count-badge" class="vlan-badge" style="background:var(--orange);color:#000">0</span>
+                    </div>
+                    <div id="findings-container">
+                        <div class="empty-state" style="padding:20px">
+                            <p>Active probes will report security findings here (open SNMP, missing ACLs, exposed management).</p>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Routing Table -->
                 <div class="card" style="margin-top:16px">
                     <div class="card-header">
@@ -123,13 +150,13 @@ const VLANsPage = {
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:18px;height:18px;vertical-align:middle;margin-right:6px">
                                 <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
                             </svg>
-                            Routing Table (OSPF / EIGRP / RIP)
+                            Routing Table
                         </span>
                         <span id="route-count-badge" class="vlan-badge vlan-badge-red">0</span>
                     </div>
                     <div id="routes-table-container">
                         <div class="empty-state" style="padding:20px">
-                            <p>No routes learned yet. Waiting for OSPF, EIGRP, or RIP broadcasts...</p>
+                            <p>No routes learned yet.</p>
                         </div>
                     </div>
                 </div>
@@ -161,7 +188,7 @@ const VLANsPage = {
                 App.toast('VLAN Discovery stopped', 'info');
             } else {
                 await API.post('/api/vlans/start');
-                App.toast('VLAN Discovery started — listening for CDP, LLDP, OSPF, EIGRP...', 'success');
+                App.toast('VLAN Discovery started — active probes + passive sniffing', 'success');
             }
         } catch (e) {
             App.toast('Failed to toggle VLAN discovery', 'error');
@@ -196,8 +223,11 @@ const VLANsPage = {
                 }
             }
             if (statusText) {
+                const probeLabel = status.probe_status === 'running' ? ' | Probes: ACTIVE'
+                    : status.probe_status === 'complete' ? ` | Probes: DONE (${status.findings_count || 0} findings)`
+                    : '';
                 statusText.textContent = status.is_running
-                    ? `ACTIVE — ${status.total_packets || 0} packets captured`
+                    ? `ACTIVE — ${status.total_packets || 0} pkts${probeLabel}`
                     : 'STOPPED';
             }
             if (btn) {
@@ -227,6 +257,11 @@ const VLANsPage = {
             if (badgeContainer) {
                 const counts = status.protocol_counts || {};
                 const protoColors = {
+                    'SNMP_PROBE': '#00e676',
+                    'GATEWAY_SWEEP': 'var(--orange)',
+                    'CROSS_VLAN_TEST': 'var(--red)',
+                    'ROUTER_FINGERPRINT': 'var(--purple)',
+                    'ARP_ANALYSIS': 'var(--cyan)',
                     'CDP': 'var(--cyan)',
                     'LLDP': 'var(--green)',
                     '802.1Q': 'var(--orange)',
@@ -236,6 +271,7 @@ const VLANsPage = {
                     'STP': 'var(--text-muted)',
                     'HSRP': '#38e8c6',
                     'VRRP': '#c678dd',
+                    'DHCP': '#61afef',
                 };
                 badgeContainer.innerHTML = Object.entries(counts)
                     .sort((a, b) => b[1] - a[1])
@@ -251,10 +287,16 @@ const VLANsPage = {
             this._setBadge('subnet-count-badge', subnets.length);
             this._setBadge('route-count-badge', routes.length);
 
+            // ── Findings stat ──
+            const findings = data.findings || [];
+            this._updateStat('vlan-stat-findings', findings.length);
+            this._setBadge('findings-count-badge', findings.length);
+
             // ── Render sections ──
             this._renderSwitches(switches);
             this._renderVLANs(vlans);
             this._renderSubnets(subnets);
+            this._renderFindings(findings);
             this._renderRoutes(routes);
 
         } catch (e) {
@@ -279,9 +321,9 @@ const VLANsPage = {
         if (!switches.length) {
             container.innerHTML = `
                 <div class="empty-state" style="padding:24px">
-                    <p>Listening for CDP / LLDP broadcasts from managed switches...</p>
+                    <p>Discovering routers & switches via SNMP, gateway probes, and CDP/LLDP...</p>
                     <p style="font-size:0.78rem;color:var(--text-muted);margin-top:4px">
-                        Managed switches send CDP/LLDP every 30-60 seconds. Wait for the first broadcast.
+                        Active probes run automatically. SNMP + gateway sweep finds devices without admin rights.
                     </p>
                 </div>`;
             return;
@@ -291,12 +333,15 @@ const VLANsPage = {
     },
 
     _renderSwitchCard(sw) {
-        const isCDP = sw.source_protocol === 'cdp';
-        const protoBadge = isCDP
-            ? '<span class="vlan-badge vlan-badge-cyan">CDP</span>'
-            : sw.source_protocol === 'lldp'
-                ? '<span class="vlan-badge vlan-badge-green">LLDP</span>'
-                : `<span class="vlan-badge vlan-badge-muted">${sw.source_protocol.toUpperCase()}</span>`;
+        const protocolBadgeMap = {
+            'cdp': 'vlan-badge-cyan',
+            'lldp': 'vlan-badge-green',
+            'snmp': 'vlan-badge-green',
+            'fingerprint': 'vlan-badge-purple',
+            'gateway_sweep': 'vlan-badge-orange',
+        };
+        const badgeClass = protocolBadgeMap[sw.source_protocol] || 'vlan-badge-muted';
+        const protoBadge = `<span class="vlan-badge ${badgeClass}">${(sw.source_protocol || 'unknown').toUpperCase()}</span>`;
 
         const capabilities = (sw.capabilities || [])
             .map(c => `<span class="protocol-tag" style="border-color:var(--cyan);color:var(--cyan);font-size:0.7rem">${c}</span>`)
@@ -406,7 +451,7 @@ const VLANsPage = {
         if (!container) return;
 
         if (!routes.length) {
-            container.innerHTML = '<div class="empty-state" style="padding:20px"><p>No routes learned yet. Waiting for OSPF, EIGRP, or RIP broadcasts...</p></div>';
+            container.innerHTML = '<div class="empty-state" style="padding:20px"><p>No routes learned yet.</p></div>';
             return;
         }
 
@@ -415,6 +460,11 @@ const VLANsPage = {
             'eigrp': 'var(--red)',
             'rip_v1': '#e8a838',
             'rip_v2': '#e8a838',
+            'snmp_local': '#00e676',
+            'snmp_static': '#00e676',
+            'snmp_ospf': 'var(--purple)',
+            'snmp_bgp': '#e8a838',
+            'snmp_other': 'var(--text-muted)',
         };
 
         const rows = routes.map(r => {
@@ -461,6 +511,55 @@ const VLANsPage = {
         } catch(e) {
             App.toast(`Failed to start scan for ${cidr}`, 'error');
         }
+    },
+
+    async triggerProbe() {
+        const btn = document.getElementById('btn-vlan-probe');
+        if (btn) btn.disabled = true;
+        try {
+            await API.post('/api/vlans/probe');
+            App.toast('Active probes launched — SNMP, gateway sweep, cross-VLAN tests', 'success');
+        } catch(e) {
+            App.toast('Failed to launch probes', 'error');
+        }
+        if (btn) setTimeout(() => { btn.disabled = false; }, 3000);
+    },
+
+    _renderFindings(findings) {
+        const container = document.getElementById('findings-container');
+        if (!container) return;
+
+        if (!findings.length) {
+            container.innerHTML = '<div class="empty-state" style="padding:20px"><p>Active probes will report security findings here (open SNMP, missing ACLs, exposed management).</p></div>';
+            return;
+        }
+
+        const severityConfig = {
+            'critical': { color: '#ff1744', icon: '🔴', label: 'CRITICAL' },
+            'high':     { color: 'var(--orange)', icon: '🟠', label: 'HIGH' },
+            'medium':   { color: '#ffd600', icon: '🟡', label: 'MEDIUM' },
+            'low':      { color: 'var(--cyan)', icon: '🔵', label: 'LOW' },
+            'info':     { color: 'var(--text-muted)', icon: 'ℹ️', label: 'INFO' },
+        };
+
+        const cards = findings.map(f => {
+            const cfg = severityConfig[f.severity] || severityConfig['info'];
+            const age = f.timestamp ? this._formatAge(f.timestamp) : '';
+            return `
+                <div style="border-left:3px solid ${cfg.color};padding:12px 16px;margin-bottom:8px;background:rgba(255,255,255,0.02);border-radius:0 6px 6px 0">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                        <span>${cfg.icon}</span>
+                        <span style="color:${cfg.color};font-weight:600;font-size:0.72rem;text-transform:uppercase">${cfg.label}</span>
+                        <span style="color:var(--text-muted);font-size:0.72rem;margin-left:auto">${age}</span>
+                    </div>
+                    <div style="font-size:0.85rem;font-weight:500;margin-bottom:4px">${this._escHtml(f.message)}</div>
+                    <div style="font-size:0.75rem;color:var(--text-muted);line-height:1.4">${this._escHtml(f.details)}</div>
+                    <div style="margin-top:4px"><span class="protocol-tag" style="border-color:${cfg.color};color:${cfg.color};font-size:0.65rem">${(f.type || '').toUpperCase().replace(/_/g, ' ')}</span></div>
+                </div>
+            `;
+        }).join('');
+
+        container.innerHTML = cards;
     },
 
     _escHtml(str) {
