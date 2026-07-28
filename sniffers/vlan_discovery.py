@@ -330,9 +330,9 @@ class VLANDiscovery:
 
     def _run_active_probes(self) -> None:
         """
-        Main active probing thread — runs all non-admin discovery methods.
-        Waits a few seconds for OS-level discovery to finish first, then
-        uses discovered gateways as targets for deeper probing.
+        Continuous active probing thread — runs discovery once, then enters
+        a tight sweep loop that re-scans discovered VLAN subnets every 5s.
+        Acts like a persistent sniffer for cross-VLAN traffic.
         """
         with self._lock:
             self._probe_status = "running"
@@ -343,28 +343,30 @@ class VLANDiscovery:
         time.sleep(4)
 
         try:
-            # Phase 1: Collect known gateway IPs from route table / local adapters
+            # ── Initial Discovery (runs once) ──────────────────────
+
+            # Phase 1: Collect known gateway IPs
             gateway_ips = self._collect_gateway_targets()
             print(f"[VLANDiscovery] Active probes: {len(gateway_ips)} gateway targets collected")
 
-            # Phase 2: SNMP query all known gateways (the crown jewel)
+            # Phase 2: SNMP query all known gateways
             for gw_ip in gateway_ips:
                 if not self._running:
-                    break
+                    return
                 self._probe_snmp_router(gw_ip)
 
-            # Phase 3: Gateway subnet sweep — find reachable gateways on remote VLANs
+            # Phase 3: Gateway subnet sweep
             if self._running:
                 self._probe_gateway_sweep()
 
-            # Phase 4: SNMP query any newly discovered gateways from the sweep
+            # Phase 4: SNMP query newly discovered gateways
             new_gateways = set(self._reachable_gateways.keys()) - self._probed_gateways
             for gw_ip in new_gateways:
                 if not self._running:
-                    break
+                    return
                 self._probe_snmp_router(gw_ip)
 
-            # Phase 5: Router fingerprinting on all discovered gateways
+            # Phase 5: Router fingerprinting
             if self._running:
                 self._probe_router_fingerprint()
 
@@ -372,20 +374,60 @@ class VLANDiscovery:
             if self._running:
                 self._probe_cross_vlan_reachability()
 
-            # Phase 7: Enhanced ARP gateway MAC analysis
+            # Phase 7: ARP gateway MAC analysis
             if self._running:
                 self._probe_arp_gateway_analysis()
 
-            # Phase 8: Sweep remote subnets for actual live host IPs
+            # Phase 8: First host sweep
             if self._running:
                 self._probe_remote_subnet_hosts()
+
+            print(f"[VLANDiscovery] Initial discovery complete. "
+                  f"Entering continuous sweep mode (every 5s)...")
+
+            # ── Continuous Sweep Loop ──────────────────────────────
+            # Re-sweep discovered subnets every 5s to catch new devices.
+            # Re-run gateway discovery every 60s to find new VLANs.
+
+            sweep_count = 0
+            last_gateway_rescan = time.time()
+
+            while self._running:
+                time.sleep(5)
+                if not self._running:
+                    break
+
+                sweep_count += 1
+
+                # Re-run gateway discovery every 60 seconds to find new VLANs
+                now = time.time()
+                if now - last_gateway_rescan > 60:
+                    last_gateway_rescan = now
+                    print(f"[VLANDiscovery] Re-scanning for new gateways...")
+                    self._probe_gateway_sweep()
+                    # SNMP probe any new ones
+                    new_gw = set(self._reachable_gateways.keys()) - self._probed_gateways
+                    for gw_ip in new_gw:
+                        if not self._running:
+                            break
+                        self._probe_snmp_router(gw_ip)
+
+                # Sweep all discovered remote subnets for live hosts
+                if self._running:
+                    self._probe_remote_subnet_hosts()
+
+                if sweep_count % 12 == 0:  # Log every ~60s
+                    with self._lock:
+                        host_count = len(self._cross_vlan_hosts)
+                    print(f"[VLANDiscovery] Sweep #{sweep_count} complete. "
+                          f"Total cross-VLAN hosts: {host_count}")
 
         except Exception as e:
             print(f"[VLANDiscovery] Active probes error: {e}")
         finally:
             with self._lock:
                 self._probe_status = "complete"
-            print(f"[VLANDiscovery] Active probes complete. Findings: {len(self._security_findings)}, "
+            print(f"[VLANDiscovery] Active probes stopped. Findings: {len(self._security_findings)}, "
                   f"VLANs: {len(self._vlans)}, Subnets: {len(self._subnets)}, "
                   f"Switches: {len(self._switches)}, Cross-VLAN hosts: {len(self._cross_vlan_hosts)}")
 
@@ -999,9 +1041,14 @@ class VLANDiscovery:
             print(f"[VLANDiscovery] ARP analysis error: {e}")
 
     def run_manual_probe(self) -> dict:
-        """Trigger a manual re-run of active probes (callable from API)."""
+        """Trigger active probes or an immediate sweep if already running."""
         if self._probe_status == "running":
-            return {"error": "Probes already running"}
+            # Already in continuous mode — trigger an immediate host sweep
+            threading.Thread(
+                target=self._probe_remote_subnet_hosts,
+                daemon=True,
+            ).start()
+            return {"status": "immediate_sweep_triggered"}
 
         self._probe_thread = threading.Thread(
             target=self._run_active_probes,
