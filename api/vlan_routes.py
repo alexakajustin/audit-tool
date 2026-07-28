@@ -2,7 +2,7 @@
 api/vlan_routes.py — Flask routes for VLAN & Subnet Intelligence.
 """
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 import api
 
 vlan_bp = Blueprint("vlans", __name__)
@@ -104,3 +104,32 @@ def trigger_probe():
         return jsonify({"error": "VLAN discovery service not initialized"}), 500
     result = api.vlan_discovery.run_manual_probe()
     return jsonify(result)
+
+
+@vlan_bp.route("/api/vlans/hosts", methods=["GET"])
+def list_cross_vlan_hosts():
+    """List all live hosts discovered on remote VLANs via sweep."""
+    if not api.vlan_discovery:
+        return jsonify({"error": "VLAN discovery service not initialized"}), 500
+    return jsonify({"hosts": api.vlan_discovery.get_cross_vlan_hosts()})
+
+
+@vlan_bp.route("/api/vlans/sweep", methods=["POST"])
+def sweep_subnet():
+    """Sweep a specific subnet for live hosts."""
+    if not api.vlan_discovery:
+        return jsonify({"error": "VLAN discovery service not initialized"}), 500
+    data = request.get_json(silent=True) or {}
+    cidr = data.get("cidr", "")
+    if not cidr:
+        return jsonify({"error": "Missing 'cidr' parameter"}), 400
+
+    import threading
+    result_holder = {"result": None}
+
+    def _do_sweep():
+        result_holder["result"] = api.vlan_discovery.sweep_subnet(cidr)
+
+    t = threading.Thread(target=_do_sweep, daemon=True)
+    t.start()
+    return jsonify({"status": "sweep_started", "subnet": cidr})

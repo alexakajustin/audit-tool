@@ -55,6 +55,7 @@ class VLANDiscovery:
         self._probed_gateways: set[str] = set()                # IPs already probed
         self._snmp_communities_found: dict[str, str] = {}      # IP -> working community
         self._reachable_gateways: dict[str, dict] = {}         # IP -> {ports, method}
+        self._cross_vlan_hosts: list[dict] = []                 # Hosts found on remote VLANs
 
         # Callbacks
         self._on_switch_found: Optional[Callable[[SwitchInfo], None]] = None
@@ -375,6 +376,10 @@ class VLANDiscovery:
             if self._running:
                 self._probe_arp_gateway_analysis()
 
+            # Phase 8: Sweep remote subnets for actual live host IPs
+            if self._running:
+                self._probe_remote_subnet_hosts()
+
         except Exception as e:
             print(f"[VLANDiscovery] Active probes error: {e}")
         finally:
@@ -382,7 +387,7 @@ class VLANDiscovery:
                 self._probe_status = "complete"
             print(f"[VLANDiscovery] Active probes complete. Findings: {len(self._security_findings)}, "
                   f"VLANs: {len(self._vlans)}, Subnets: {len(self._subnets)}, "
-                  f"Switches: {len(self._switches)}")
+                  f"Switches: {len(self._switches)}, Cross-VLAN hosts: {len(self._cross_vlan_hosts)}")
 
     def _collect_gateway_targets(self) -> list[str]:
         """Collect all known gateway IPs from subnets, routes, and local adapters."""
@@ -1005,6 +1010,261 @@ class VLANDiscovery:
         self._probe_thread.start()
         return {"status": "probes_started"}
 
+    def sweep_subnet(self, cidr: str) -> dict:
+        """Sweep a specific subnet for live hosts (callable from API)."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        try:
+            net = ipaddress.IPv4Network(cidr, strict=False)
+        except Exception:
+            return {"error": f"Invalid CIDR: {cidr}"}
+
+        if net.prefixlen < 22:
+            return {"error": "Subnet too large (max /22)"}
+
+        hosts = [str(h) for h in net.hosts()]
+        if len(hosts) > 254:
+            hosts = hosts[:254]
+
+        print(f"[VLANDiscovery] On-demand sweep of {net} ({len(hosts)} hosts)...")
+
+        def _check_host(ip_str: str) -> dict | None:
+            try:
+                proc = subprocess.run(
+                    ["ping", "-n", "1", "-w", "300", ip_str],
+                    capture_output=True, text=True, timeout=2,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                    if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+                )
+                if "TTL=" in proc.stdout or "ttl=" in proc.stdout:
+                    ttl = 0
+                    m = re.search(r'TTL=(\d+)', proc.stdout, re.IGNORECASE)
+                    if m:
+                        ttl = int(m.group(1))
+                    return {"ip": ip_str, "ttl": ttl, "method": "ping"}
+            except Exception:
+                pass
+            for port in [80, 443, 22, 554, 8080, 8291]:
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(0.3)
+                    result = sock.connect_ex((ip_str, port))
+                    sock.close()
+                    if result == 0:
+                        return {"ip": ip_str, "port": port, "method": "tcp"}
+                except Exception:
+                    pass
+            return None
+
+        found = []
+        with ThreadPoolExecutor(max_workers=40) as pool:
+            futures = {pool.submit(_check_host, ip): ip for ip in hosts}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    ip_str = result["ip"]
+                    ttl = result.get("ttl", 0)
+                    os_hint = ""
+                    if ttl > 0:
+                        if ttl <= 64:
+                            os_hint = "Linux/macOS/IoT"
+                        elif ttl <= 128:
+                            os_hint = "Windows"
+                        else:
+                            os_hint = "Network Device"
+
+                    entry = {
+                        "ip": ip_str,
+                        "subnet": str(net),
+                        "ttl": ttl,
+                        "os_hint": os_hint,
+                        "method": result.get("method", "ping"),
+                        "open_port": result.get("port"),
+                        "timestamp": time.time(),
+                    }
+                    found.append(entry)
+
+                    with self._lock:
+                        if not any(h["ip"] == ip_str for h in self._cross_vlan_hosts):
+                            self._cross_vlan_hosts.append(entry)
+
+                    self._inject_device_to_inventory(
+                        ip=ip_str,
+                        hostname=f"{os_hint}-{ip_str}" if os_hint else "",
+                        method="SUBNET_SWEEP"
+                    )
+                    print(f"[VLANDiscovery] SWEEP: {ip_str} on {net} (TTL={ttl}, {os_hint})")
+
+        print(f"[VLANDiscovery] On-demand sweep of {net} complete: {len(found)} hosts found.")
+        return {"subnet": str(net), "hosts_found": len(found), "hosts": found}
+
+
+    # ── Remote Subnet Host Sweep ─────────────────────────────────
+
+    def _probe_remote_subnet_hosts(self) -> None:
+        """
+        Ping/TCP sweep all discovered remote subnets to find live host IPs.
+        Uses concurrent threads for speed. No admin required.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        print("[VLANDiscovery] Sweeping remote subnets for live hosts...")
+        self._record_hit("HOST_SWEEP")
+
+        # Determine local subnet
+        local_subnet = None
+        try:
+            from network.interfaces import get_best_interface
+            best = get_best_interface()
+            if best and best.subnet:
+                local_subnet = ipaddress.IPv4Network(best.subnet, strict=False)
+        except Exception:
+            pass
+
+        # Collect remote subnets to sweep — ONLY those confirmed reachable
+        remote_subnets = []
+        with self._lock:
+            for subnet_info in self._subnets.values():
+                try:
+                    net = ipaddress.IPv4Network(subnet_info.cidr, strict=False)
+                    # Skip local subnet, loopback, link-local, huge subnets
+                    if net.prefixlen < 22:
+                        continue
+                    if net.is_loopback or net.is_link_local or net.is_multicast:
+                        continue
+                    if not net.is_private:
+                        continue
+                    if local_subnet and net == local_subnet:
+                        continue
+                    # ONLY sweep subnets where we confirmed the gateway is actually
+                    # reachable — gateway_sweep and snmp both verify connectivity.
+                    # DO NOT sweep traceroute subnets — those are ISP transit hops
+                    # that will waste minutes timing out on 254 unreachable hosts.
+                    src = subnet_info.source_protocol or ""
+                    if any(kw in src for kw in ("snmp", "gateway_sweep")):
+                        remote_subnets.append(net)
+                except Exception:
+                    continue
+
+        if not remote_subnets:
+            print("[VLANDiscovery] No confirmed-reachable remote subnets to sweep.")
+            return
+
+        # Prioritize 192.168.x.x subnets (most common for VLAN setups)
+        remote_subnets.sort(key=lambda n: (0 if str(n).startswith("192.168.") else 1, str(n)))
+
+        print(f"[VLANDiscovery] Sweeping {len(remote_subnets)} confirmed-reachable subnet(s): "
+              f"{', '.join(str(s) for s in remote_subnets)}")
+
+
+        def _ping_host(ip_str: str) -> dict | None:
+            """Ping a single host. Returns info dict if alive, None otherwise."""
+            if not self._running:
+                return None
+            try:
+                proc = subprocess.run(
+                    ["ping", "-n", "1", "-w", "300", ip_str],
+                    capture_output=True, text=True, timeout=2,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                    if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+                )
+                if "TTL=" in proc.stdout or "ttl=" in proc.stdout:
+                    # Extract TTL for fingerprinting
+                    ttl = 0
+                    ttl_match = re.search(r'TTL=(\d+)', proc.stdout, re.IGNORECASE)
+                    if ttl_match:
+                        ttl = int(ttl_match.group(1))
+                    return {"ip": ip_str, "ttl": ttl, "method": "ping"}
+            except Exception:
+                pass
+
+            # TCP fallback: try common ports
+            for port in [80, 443, 22, 554, 8080, 8291]:
+                if not self._running:
+                    return None
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(0.3)
+                    result = sock.connect_ex((ip_str, port))
+                    sock.close()
+                    if result == 0:
+                        return {"ip": ip_str, "port": port, "method": "tcp"}
+                except Exception:
+                    pass
+            return None
+
+        total_found = 0
+        for subnet in remote_subnets:
+            if not self._running:
+                break
+
+            # Generate host IPs (skip .0 network and .255 broadcast)
+            hosts = [str(h) for h in subnet.hosts()]
+            if len(hosts) > 254:
+                hosts = hosts[:254]  # Cap at /24 size
+
+            print(f"[VLANDiscovery] Sweeping {subnet} ({len(hosts)} hosts)...")
+
+            with ThreadPoolExecutor(max_workers=40) as pool:
+                futures = {pool.submit(_ping_host, ip): ip for ip in hosts}
+                for future in as_completed(futures):
+                    if not self._running:
+                        break
+                    result = future.result()
+                    if result:
+                        ip_str = result["ip"]
+                        total_found += 1
+
+                        # Determine OS hint from TTL
+                        ttl = result.get("ttl", 0)
+                        os_hint = ""
+                        if ttl > 0:
+                            if ttl <= 64:
+                                os_hint = "Linux/macOS/IoT"
+                            elif ttl <= 128:
+                                os_hint = "Windows"
+                            else:
+                                os_hint = "Network Device"
+
+                        host_entry = {
+                            "ip": ip_str,
+                            "subnet": str(subnet),
+                            "ttl": ttl,
+                            "os_hint": os_hint,
+                            "method": result.get("method", "ping"),
+                            "open_port": result.get("port"),
+                            "timestamp": time.time(),
+                        }
+
+                        with self._lock:
+                            # Deduplicate
+                            if not any(h["ip"] == ip_str for h in self._cross_vlan_hosts):
+                                self._cross_vlan_hosts.append(host_entry)
+
+                        # Inject into central inventory
+                        self._inject_device_to_inventory(
+                            ip=ip_str,
+                            hostname=f"{os_hint}-{ip_str}" if os_hint else "",
+                            method="CROSS_VLAN_SWEEP"
+                        )
+
+                        print(f"[VLANDiscovery] HOST FOUND: {ip_str} on {subnet} "
+                              f"(TTL={ttl}, {os_hint}, via {result.get('method')})")
+
+        print(f"[VLANDiscovery] Host sweep complete. {total_found} live hosts found on remote VLANs.")
+
+        if total_found > 0:
+            self._add_finding(
+                severity="high",
+                finding_type="cross_vlan_hosts",
+                target=f"{total_found} hosts",
+                message=f"{total_found} devices on remote VLANs are directly reachable",
+                details=f"A ping/TCP sweep of remote subnets found {total_found} live hosts that are "
+                        f"directly reachable from your VLAN ({local_subnet}). This confirms that "
+                        f"inter-VLAN routing has no ACL restrictions. All discovered hosts can be "
+                        f"directly attacked from any device on your VLAN."
+            )
+
 
     def _inject_device_to_inventory(self, ip: str, mac: str = "", hostname: str = "", method: str = "") -> None:
         """Helper to inject a discovered device into the central inventory."""
@@ -1072,6 +1332,11 @@ class VLANDiscovery:
         with self._lock:
             return list(self._security_findings)
 
+    def get_cross_vlan_hosts(self) -> list[dict]:
+        """Get all live hosts discovered on remote VLANs."""
+        with self._lock:
+            return list(self._cross_vlan_hosts)
+
     def get_full_intelligence(self) -> dict:
         """Get all discovered intelligence in one response."""
         with self._lock:
@@ -1089,6 +1354,7 @@ class VLANDiscovery:
                 "switches": [s.to_dict() for s in self._switches.values()],
                 "routes": [r.to_dict() for r in self._routes.values()],
                 "findings": list(self._security_findings),
+                "cross_vlan_hosts": list(self._cross_vlan_hosts),
             }
 
     # ── Capture Loop ─────────────────────────────────────────────

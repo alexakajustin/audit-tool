@@ -143,6 +143,25 @@ const VLANsPage = {
                     </div>
                 </div>
 
+                <!-- Cross-VLAN Discovered Hosts -->
+                <div class="card" style="margin-top:16px">
+                    <div class="card-header">
+                        <span class="card-title">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.5" style="width:18px;height:18px;vertical-align:middle;margin-right:6px">
+                                <circle cx="12" cy="12" r="3"/>
+                                <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+                            </svg>
+                            Cross-VLAN Discovered Hosts
+                        </span>
+                        <span id="hosts-count-badge" class="vlan-badge vlan-badge-red">0</span>
+                    </div>
+                    <div id="hosts-table-container">
+                        <div class="empty-state" style="padding:20px">
+                            <p>After discovering remote VLANs, a host sweep will enumerate live devices on those subnets.</p>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Routing Table -->
                 <div class="card" style="margin-top:16px">
                     <div class="card-header">
@@ -262,6 +281,7 @@ const VLANsPage = {
                     'CROSS_VLAN_TEST': 'var(--red)',
                     'ROUTER_FINGERPRINT': 'var(--purple)',
                     'ARP_ANALYSIS': 'var(--cyan)',
+                    'HOST_SWEEP': 'var(--red)',
                     'CDP': 'var(--cyan)',
                     'LLDP': 'var(--green)',
                     '802.1Q': 'var(--orange)',
@@ -292,11 +312,16 @@ const VLANsPage = {
             this._updateStat('vlan-stat-findings', findings.length);
             this._setBadge('findings-count-badge', findings.length);
 
+            // ── Cross-VLAN hosts ──
+            const crossHosts = data.cross_vlan_hosts || [];
+            this._setBadge('hosts-count-badge', crossHosts.length);
+
             // ── Render sections ──
             this._renderSwitches(switches);
             this._renderVLANs(vlans);
             this._renderSubnets(subnets);
             this._renderFindings(findings);
+            this._renderCrossVlanHosts(crossHosts);
             this._renderRoutes(routes);
 
         } catch (e) {
@@ -502,14 +527,11 @@ const VLANsPage = {
 
     async scanSubnet(cidr) {
         try {
-            App.toast(`Starting active Nmap scan on ${cidr}...`, 'info');
-            await API.post('/api/scanners/start', {
-                scanner_id: 'nmap_scanner',
-                target: cidr
-            });
-            App.toast(`Scan initiated for ${cidr}! Check Dashboard or Scanners tab for progress.`, 'success');
+            App.toast(`Sweeping ${cidr} for live hosts...`, 'info');
+            await API.post('/api/vlans/sweep', { cidr });
+            App.toast(`Host sweep started for ${cidr}! Results will appear in Cross-VLAN Hosts.`, 'success');
         } catch(e) {
-            App.toast(`Failed to start scan for ${cidr}`, 'error');
+            App.toast(`Failed to start sweep for ${cidr}`, 'error');
         }
     },
 
@@ -560,6 +582,61 @@ const VLANsPage = {
         }).join('');
 
         container.innerHTML = cards;
+    },
+
+    _renderCrossVlanHosts(hosts) {
+        const container = document.getElementById('hosts-table-container');
+        if (!container) return;
+
+        if (!hosts.length) {
+            container.innerHTML = '<div class="empty-state" style="padding:20px"><p>After discovering remote VLANs, a host sweep will enumerate live devices on those subnets.</p></div>';
+            return;
+        }
+
+        // Group by subnet
+        const bySubnet = {};
+        hosts.forEach(h => {
+            const sn = h.subnet || 'Unknown';
+            if (!bySubnet[sn]) bySubnet[sn] = [];
+            bySubnet[sn].push(h);
+        });
+
+        const rows = hosts.map(h => {
+            const osColor = h.os_hint === 'Windows' ? 'var(--cyan)'
+                : h.os_hint === 'Linux/macOS/IoT' ? 'var(--green)'
+                : h.os_hint === 'Network Device' ? 'var(--orange)'
+                : 'var(--text-muted)';
+            const methodBadge = h.method === 'tcp'
+                ? `<span class="protocol-tag" style="border-color:var(--orange);color:var(--orange);font-size:0.65rem">TCP:${h.open_port}</span>`
+                : '<span class="protocol-tag" style="border-color:var(--green);color:var(--green);font-size:0.65rem">PING</span>';
+            const age = h.timestamp ? this._formatAge(h.timestamp) : '';
+            return `
+                <tr>
+                    <td style="font-family:var(--font-mono);font-size:0.82rem;color:var(--red);font-weight:500">${this._escHtml(h.ip)}</td>
+                    <td style="font-family:var(--font-mono);font-size:0.78rem">${this._escHtml(h.subnet)}</td>
+                    <td>${h.ttl || '—'}</td>
+                    <td><span style="color:${osColor};font-weight:500;font-size:0.82rem">${this._escHtml(h.os_hint || '—')}</span></td>
+                    <td>${methodBadge}</td>
+                    <td style="color:var(--text-muted);font-size:0.75rem">${age}</td>
+                </tr>
+            `;
+        }).join('');
+
+        const subnetSummary = Object.entries(bySubnet)
+            .map(([sn, list]) => `<span class="protocol-tag" style="border-color:var(--red);color:var(--red);font-size:0.7rem">${sn}: ${list.length} host${list.length > 1 ? 's' : ''}</span>`)
+            .join(' ');
+
+        container.innerHTML = `
+            <div style="padding:8px 16px;display:flex;gap:6px;flex-wrap:wrap">${subnetSummary}</div>
+            <div class="table-wrapper">
+                <table class="data-table">
+                    <thead><tr>
+                        <th>IP Address</th><th>Subnet</th><th>TTL</th><th>OS Hint</th><th>Method</th><th>Found</th>
+                    </tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        `;
     },
 
     _escHtml(str) {
