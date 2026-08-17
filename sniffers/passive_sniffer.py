@@ -39,6 +39,7 @@ class PassiveSniffer(BaseSniffer):
         self._unique_hosts: set[str] = set()
         self._start_time: float = 0.0
         self._on_packet: Optional[Callable[[PacketInfo], None]] = None
+        self._last_on_packet_time: float = 0.0
         self._raw_packets: deque = deque(maxlen=self._max_packets) # Raw Scapy packets for pcap export
         self._lock = threading.Lock()
 
@@ -141,9 +142,16 @@ class PassiveSniffer(BaseSniffer):
         # Detect local IP for this interface
         self._local_ip = self._detect_local_ip(interface)
 
+        port = getattr(Config, "PORT", 5000)
+        exclude_rule = f"not port {port}"
+        if bpf_filter:
+            effective_filter = f"({bpf_filter}) and {exclude_rule}"
+        else:
+            effective_filter = exclude_rule
+
         self._thread = threading.Thread(
             target=self._capture_loop,
-            args=(interface, bpf_filter),
+            args=(interface, effective_filter),
             daemon=True,
         )
         self._thread.start()
@@ -777,10 +785,13 @@ class PassiveSniffer(BaseSniffer):
                             self._track_intelligence(pkt, info)
 
                     if self._on_packet:
-                        try:
-                            self._on_packet(info)
-                        except Exception:
-                            pass
+                        now = time.time()
+                        if now - self._last_on_packet_time >= 0.04:  # ~25 fps max for UI streaming
+                            self._last_on_packet_time = now
+                            try:
+                                self._on_packet(info)
+                            except Exception:
+                                pass
             except Exception as e:
                 pass
 
