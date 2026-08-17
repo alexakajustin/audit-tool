@@ -60,11 +60,22 @@ class SMBAuditor(BaseScanner):
         """Available on Windows where win32net is present."""
         return True
 
+    def _is_smb_port_open(self, ip: str, timeout: float = 0.35) -> bool:
+        """Fast TCP probe to verify if port 445 is actively listening."""
+        import socket
+        try:
+            with socket.create_connection((ip, 445), timeout=timeout):
+                return True
+        except (socket.timeout, socket.error, OSError):
+            return False
+
     def scan(
         self,
         target: ScanTarget,
         on_device_found: Optional[Callable[[Device], None]] = None,
     ) -> ScanResult:
+        import concurrent.futures
+
         result = ScanResult(scanner_name=self.name, state=ScanState.RUNNING)
         result.start_time = time.time()
 
@@ -79,22 +90,55 @@ class SMBAuditor(BaseScanner):
             result.end_time = time.time()
             return result
 
-        for ip in target_ips:
+        # Step 1: Fast parallel port 445 pre-check (skips non-SMB / offline hosts in <0.5s)
+        active_smb_ips = []
+        if len(target_ips) == 1:
+            active_smb_ips = target_ips
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+                future_to_ip = {executor.submit(self._is_smb_port_open, ip): ip for ip in target_ips}
+                for future in concurrent.futures.as_completed(future_to_ip):
+                    ip = future_to_ip[future]
+                    try:
+                        if future.result():
+                            active_smb_ips.append(ip)
+                    except Exception:
+                        pass
+
+        if not active_smb_ips:
+            result.state = ScanState.COMPLETE
+            result.end_time = time.time()
+            return result
+
+        # Step 2: Concurrent host auditing on active SMB servers
+        def audit_worker(ip_addr: str) -> Optional[Device]:
             try:
-                device = self._audit_host(ip, username, password)
-                if device:
-                    result.devices.append(device)
-                    if on_device_found:
-                        try:
-                            on_device_found(device)
-                        except Exception:
-                            pass
+                return self._audit_host(ip_addr, username, password)
             except Exception as e:
-                result.errors.append(f"Error auditing {ip}: {e}")
+                result.errors.append(f"Error auditing {ip_addr}: {e}")
+                return None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_ip = {executor.submit(audit_worker, ip): ip for ip in active_smb_ips}
+            done, not_done = concurrent.futures.wait(future_to_ip.keys(), timeout=4.0)
+            
+            for future in done:
+                try:
+                    dev = future.result()
+                    if dev:
+                        result.devices.append(dev)
+                        if on_device_found:
+                            try:
+                                on_device_found(dev)
+                            except Exception:
+                                pass
+                except Exception as e:
+                    result.errors.append(f"Worker error: {e}")
 
         result.state = ScanState.COMPLETE
         result.end_time = time.time()
         return result
+
 
     def _resolve_target_ips(self, subnet_str: str) -> list[str]:
         ips = []
@@ -117,7 +161,7 @@ class SMBAuditor(BaseScanner):
 
     def _audit_host(self, ip: str, username: str, password: str) -> Optional[Device]:
         """Enumerate and audit shares on a single host."""
-        # 1. Enumerate Shares using win32net + common share probing
+        # 1. Enumerate Shares using win32net
         shares = []
         try:
             share_data, _, _ = win32net.NetShareEnum(ip, 1)
@@ -128,23 +172,23 @@ class SMBAuditor(BaseScanner):
                     "remark": s.get("remark", "")
                 })
         except Exception:
-            pass
-
-        # If standard share enum didn't find custom shares, add common probe targets
-        known_names = {s["name"].upper() for s in shares}
-        common_probes = ["C$", "ADMIN$", "IPC$", "Users", "Public", "Shares", "Data", "Backup", "SYSVOL", "NETLOGON"]
-        for p in common_probes:
-            if p.upper() not in known_names:
-                shares.append({"name": p, "type": 0, "remark": "Common share probe"})
+            # If win32net NetShareEnum fails (e.g. remote access denied), probe standard administrative shares
+            shares = [
+                {"name": "C$", "type": 0, "remark": "Default Drive Share"},
+                {"name": "ADMIN$", "type": 0, "remark": "Remote Admin Share"},
+                {"name": "IPC$", "type": 3, "remark": "Remote IPC"},
+            ]
         
         if not shares:
             return None
         
-        # 2. Register SMB Session
+        # 2. Register SMB Session if credentials provided
         active_identity = username if username else f"{os.environ.get('USERDOMAIN', '')}\\{os.environ.get('USERNAME', '')} (Active Station Session)"
         try:
             if username and password:
                 smbclient.register_session(ip, username=username, password=password)
+            elif username:
+                smbclient.register_session(ip, username=username)
             else:
                 smbclient.register_session(ip)
         except Exception:
@@ -172,12 +216,13 @@ class SMBAuditor(BaseScanner):
             except Exception as e:
                 err_str = str(e)
                 error = err_str
-                if "STATUS_LOGON_FAILURE" in err_str or "0xc000006d" in err_str:
+                # Filter out non-existent shares
+                if "STATUS_BAD_NETWORK_NAME" in err_str or "0xc00000cc" in err_str or "WinError 67" in err_str or "network name cannot be found" in err_str:
+                    continue
+                elif "STATUS_LOGON_FAILURE" in err_str or "0xc000006d" in err_str or "WinError 1326" in err_str:
                     permission_label = "Denied (Logon Failure / Unauthenticated)"
-                elif "STATUS_ACCESS_DENIED" in err_str or "0xc0000022" in err_str:
+                elif "STATUS_ACCESS_DENIED" in err_str or "0xc0000022" in err_str or "WinError 5" in err_str:
                     permission_label = "Denied (Unauthorized User)"
-                elif "STATUS_BAD_NETWORK_NAME" in err_str or "0xc00000cc" in err_str:
-                    continue  # Share does not exist on this host, skip it
                 else:
                     permission_label = f"Error: {err_str[:40]}"
                 
@@ -211,47 +256,53 @@ class SMBAuditor(BaseScanner):
     def _recursive_list(self, base_path: str, max_items: int = 10) -> list[str]:
         """List root folder items only, up to max_items, to verify read access."""
         found = []
+        
+        # Method 1: Try native OS first (automatically uses active session / cached credentials)
+        try:
+            import os
+            for entry in os.scandir(base_path):
+                if len(found) >= max_items:
+                    break
+                try:
+                    is_dir = entry.is_dir()
+                except Exception:
+                    is_dir = False
+                if is_dir:
+                    found.append(f"[DIR]  {entry.name}")
+                else:
+                    found.append(f"[FILE] {entry.name}")
+            return found
+        except Exception as os_err:
+            # If native OS failed with non-existent share, don't fallback to smbclient
+            err_msg = str(os_err)
+            if "WinError 67" in err_msg or "network name cannot be found" in err_msg:
+                raise
+
+        # Method 2: smbclient fallback
         try:
             with smbclient.scandir(base_path) as it:
-                while True:
+                for entry in it:
                     try:
-                        entry = next(it)
-                    except StopIteration:
-                        break
+                        if len(found) >= max_items:
+                            break
+                        if entry.name in ('.', '..'):
+                            continue
+
+                        try:
+                            is_dir = entry.is_dir()
+                        except Exception:
+                            is_dir = False
+
+                        if is_dir:
+                            found.append(f"[DIR]  {entry.name}")
+                        else:
+                            found.append(f"[FILE] {entry.name}")
                     except Exception:
                         continue
-
-                    if len(found) >= max_items:
-                        break
-                    if entry.name in ('.', '..'):
-                        continue
-
-                    try:
-                        is_dir = entry.is_dir()
-                    except Exception:
-                        is_dir = False
-
-                    if is_dir:
-                        found.append(f"[DIR]  {entry.name}")
-                    else:
-                        found.append(f"[FILE] {entry.name}")
         except Exception:
-            # Fallback to os.scandir
-            try:
-                import os
-                for entry in os.scandir(base_path):
-                    if len(found) >= max_items:
-                        break
-                    try:
-                        is_dir = entry.is_dir()
-                    except Exception:
-                        is_dir = False
-                    if is_dir:
-                        found.append(f"[DIR]  {entry.name}")
-                    else:
-                        found.append(f"[FILE] {entry.name}")
-            except Exception:
-                raise
+            raise
                 
         return found
+
+
 

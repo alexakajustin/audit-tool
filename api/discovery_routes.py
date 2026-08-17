@@ -188,18 +188,49 @@ def scan_smb():
     if ip:
         target_ips = [ip]
     else:
+        # 1. Collect from Inventory (hosts with port 445 or online)
         devices = api.inventory.get_all()
-        # Find devices that have port 445 open or were discovered before
         for d in devices:
             if d.ip and not d.ip.startswith("127."):
                 has_smb = any(p.port == 445 and p.state == "open" for p in d.ports)
-                if has_smb:
+                if has_smb or d.status.value == "online":
                     target_ips.append(d.ip)
         
-        # If no explicit target and no devices have port 445 explicitly open, we might fallback
-        # to all devices, but that could be slow. So we require port scan first or specific IP.
+        # 2. Collect from Windows Credential Manager targets
+        try:
+            import win32cred
+            import re
+            creds = win32cred.CredEnumerate(None, 0) or []
+            for c in creds:
+                t = c.get("TargetName", "")
+                m = re.search(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', t)
+                if m:
+                    target_ips.append(m.group(0))
+        except Exception:
+            pass
+
+        # 3. Add local host IP if present
+        try:
+            import socket
+            hostname = socket.gethostname()
+            local_ip = socket.gethostbyname(hostname)
+            if local_ip and not local_ip.startswith("127."):
+                target_ips.append(local_ip)
+        except Exception:
+            pass
+
+        # De-duplicate while preserving order
+        seen = set()
+        deduped = []
+        for tip in target_ips:
+            if tip not in seen:
+                seen.add(tip)
+                deduped.append(tip)
+        target_ips = deduped
+
+        # If still empty, default to local machine
         if not target_ips:
-            return jsonify({"error": "No target IPs found. Please run a port scan first to identify SMB servers (port 445), or provide a specific IP."}), 400
+            target_ips = ["127.0.0.1"]
 
     target = ScanTarget(
         subnet=" ".join(target_ips),
@@ -272,43 +303,8 @@ def smb_listdir():
     items = []
     scan_error = None
 
-    # Method 1: smbclient scandir with robust entry handling
-    try:
-        with smbclient.scandir(unc_path) as it:
-            while True:
-                try:
-                    entry = next(it)
-                except StopIteration:
-                    break
-                except Exception:
-                    # Skip problematic/locked entries during iteration
-                    continue
-
-                if entry.name in ('.', '..'):
-                    continue
-
-                try:
-                    is_dir = entry.is_dir()
-                except Exception:
-                    is_dir = False
-
-                size = 0
-                if not is_dir:
-                    try:
-                        size = entry.stat().st_size
-                    except Exception:
-                        size = 0
-
-                items.append({
-                    "name": entry.name,
-                    "is_dir": is_dir,
-                    "size": size,
-                })
-    except Exception as e:
-        scan_error = e
-
-    # Method 2: Native Windows UNC fallback (e.g. for local shares or OS-authenticated shares)
-    if scan_error and not items:
+    # If NO explicit password given, try native Windows OS first (uses active station session / OS cached tokens)
+    if not password:
         try:
             import os
             for entry in os.scandir(unc_path):
@@ -333,12 +329,52 @@ def smb_listdir():
         except Exception as os_err:
             scan_error = os_err
 
+    # If items found via native OS, return immediately
+    if items and not scan_error:
+        items.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
+        return jsonify({"status": "success", "items": items, "path": unc_path, "resolved_user": username})
+
+    # Method 2: smbclient (with explicit credentials or SSPI)
+    try:
+        with smbclient.scandir(unc_path) as it:
+            for entry in it:
+                try:
+                    if entry.name in ('.', '..'):
+                        continue
+
+                    try:
+                        is_dir = entry.is_dir()
+                    except Exception:
+                        is_dir = False
+
+                    size = 0
+                    if not is_dir:
+                        try:
+                            size = entry.stat().st_size
+                        except Exception:
+                            size = 0
+
+                    items.append({
+                        "name": entry.name,
+                        "is_dir": is_dir,
+                        "size": size,
+                    })
+                except Exception:
+                    continue
+        scan_error = None
+    except Exception as e:
+        scan_error = e
+
     if scan_error and not items:
-        return jsonify({"error": f"Failed to list directory: {str(scan_error)}"}), 500
+        err_msg = str(scan_error)
+        if "WinError 67" in err_msg or "0xc00000cc" in err_msg or "network name cannot be found" in err_msg or "STATUS_BAD_NETWORK_NAME" in err_msg:
+            return jsonify({"error": f"Share '{share}' does not exist on {ip}."}), 404
+        return jsonify({"error": f"Failed to list directory: {err_msg}"}), 500
 
     # Sort items: directories first, then alphabetical
     items.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
     return jsonify({"status": "success", "items": items, "path": unc_path, "resolved_user": username})
+
 
 
 
@@ -393,6 +429,24 @@ def smb_session_info():
             target = c.get("TargetName", "")
             user = c.get("UserName", "")
             ctype = c.get("Type", 1)
+            password = ""
+
+            try:
+                detail = win32cred.CredRead(target, ctype, 0)
+                blob = detail.get("CredentialBlob")
+                if blob:
+                    try:
+                        s = blob.decode('utf-8')
+                        if s and all(32 <= ord(ch) < 127 for ch in s):
+                            password = s
+                        else:
+                            s16 = blob.decode('utf-16-le', errors='ignore').rstrip('\x00')
+                            if s16 and any(32 <= ord(ch) < 127 for ch in s16):
+                                password = s16
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             
             # Extract IP if present in target
             ip_match = re.search(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', target)
@@ -404,6 +458,8 @@ def smb_session_info():
                     "target": target,
                     "ip": ip,
                     "username": user,
+                    "password": password,
+                    "has_password": bool(password),
                     "type": type_label,
                 })
         info["vault_targets"] = vault_items

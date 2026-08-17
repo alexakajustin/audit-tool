@@ -2,7 +2,9 @@
  * SMB Audit & Credential Explorer Component
  * Features:
  * - Station Identity & Credential Vault Discovery (Automatic unprivileged session emulation)
- * - Smart Credential Auto-Matching per Target IP
+ * - Smart Credential & Password Auto-Matching per Target IP
+ * - Host Credential Session Caching (remembers passwords for explored hosts)
+ * - Full Recursive Directory Exploration with Breadcrumbs & In-place Password Prompt
  * - Robust Directory Explorer (Locked/system file resilience)
  * - Permission auditing per share
  */
@@ -10,6 +12,7 @@ const SMBPage = {
     _pollInterval: null,
     _devices: [],
     _sessionInfo: null,
+    _hostCredsCache: {}, // ip -> { user, pass }
     
     // Explorer State
     _ip: '',
@@ -19,7 +22,7 @@ const SMBPage = {
     _pass: '',
 
     title: 'SMB Share & Credential Audit',
-    subtitle: 'Station session emulation, credential discovery, and permission audit',
+    subtitle: 'Station session emulation, credential discovery, and recursive file browsing',
 
     async render(container) {
         container.innerHTML = `
@@ -56,10 +59,10 @@ const SMBPage = {
                     <div style="display:flex; gap:10px; align-items:center; flex:1;">
                         <input type="text" id="smb-ip-input" class="form-control form-control-sm" placeholder="Target IP (leave empty for all)" style="max-width:190px;">
                         <div style="position:relative; flex:1; max-width:260px;">
-                            <input type="text" id="smb-user" class="form-control form-control-sm" placeholder="Username (SSPI session if empty)" oninput="delete this.dataset.autoMatched">
+                            <input type="text" id="smb-user" class="form-control form-control-sm" placeholder="Username (SSPI session if empty)" oninput="delete this.dataset.autoMatched; SMBPage._updateCreds();">
                             <span id="smb-user-badge" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); font-size:0.65rem; color:var(--cyan); pointer-events:none; display:none;">Auto</span>
                         </div>
-                        <input type="password" id="smb-pass" class="form-control form-control-sm" placeholder="Password (optional)" style="max-width:160px;">
+                        <input type="password" id="smb-pass" class="form-control form-control-sm" placeholder="Password (optional)" style="max-width:160px;" oninput="SMBPage._updateCreds();">
                     </div>
                     
                     <button id="btn-scan-smb" class="btn btn-primary btn-sm" onclick="SMBPage.scanSMB()" style="background:var(--purple); color:white; border:none; display:flex; align-items:center; gap:6px;">
@@ -169,10 +172,10 @@ const SMBPage = {
             // Render discovered vault targets
             if (vaultEl && data.vault_targets && data.vault_targets.length > 0) {
                 let vHtml = '<span style="font-size:0.75rem; color:var(--text-muted); margin-right:4px;">Discovered Vault Accounts:</span>';
-                data.vault_targets.slice(0, 6).forEach(v => {
+                data.vault_targets.slice(0, 6).forEach((v, idx) => {
                     const label = v.ip ? `${v.ip} (${v.username || 'Saved'})` : (v.username || v.target);
                     vHtml += `
-                        <button class="btn btn-sm" onclick="SMBPage.useVaultTarget('${v.ip}', '${v.username}')"
+                        <button class="btn btn-sm" onclick="SMBPage.useVaultTargetByIdx(${idx})"
                                 style="font-size:0.7rem; padding:2px 8px; background:rgba(0, 240, 255, 0.08); border:1px solid rgba(0, 240, 255, 0.25); color:var(--cyan); border-radius:12px; cursor:pointer;"
                                 title="Click to use target: ${v.target}">
                             🔑 ${label}
@@ -186,7 +189,14 @@ const SMBPage = {
         }
     },
 
-    useVaultTarget(ip, username) {
+    useVaultTargetByIdx(idx) {
+        const v = this._sessionInfo?.vault_targets?.[idx];
+        if (v) {
+            this.useVaultTarget(v.ip, v.username, v.password);
+        }
+    },
+
+    useVaultTarget(ip, username, password) {
         if (ip) {
             const ipInput = document.getElementById('smb-ip-input');
             if (ipInput) ipInput.value = ip;
@@ -200,6 +210,16 @@ const SMBPage = {
             }
             this._user = username;
         }
+        if (password) {
+            const passInput = document.getElementById('smb-pass');
+            if (passInput) passInput.value = password;
+            this._pass = password;
+        }
+        
+        if (ip && username) {
+            this._hostCredsCache[ip] = { user: username, pass: password || '' };
+        }
+
         this._updateCreds();
         App.toast(`Selected target: ${ip || username}`, 'info');
         if (ip) {
@@ -336,24 +356,42 @@ const SMBPage = {
         this._share = share;
         this._path = '';
         
-        // Smart auto-matching: if username field is empty or was auto-matched, check discovered vault targets
         const ipInput = document.getElementById('smb-ip-input');
         if (ipInput) ipInput.value = ip;
         
         const matchingVault = this._sessionInfo?.vault_targets?.find(v => v.ip === ip || (v.target && v.target.includes(ip)));
+        const cachedCred = this._hostCredsCache[ip];
         const userInput = document.getElementById('smb-user');
+        const passInput = document.getElementById('smb-pass');
         
-        if (matchingVault && matchingVault.username) {
-            if (userInput && (!userInput.value || userInput.dataset.autoMatched === 'true')) {
+        if (cachedCred) {
+            if (userInput) {
+                userInput.value = cachedCred.user;
+                this._user = cachedCred.user;
+            }
+            if (passInput) {
+                passInput.value = cachedCred.pass;
+                this._pass = cachedCred.pass;
+            }
+        } else if (matchingVault) {
+            if (matchingVault.username && userInput && (!userInput.value || userInput.dataset.autoMatched === 'true')) {
                 userInput.value = matchingVault.username;
                 userInput.dataset.autoMatched = 'true';
                 this._user = matchingVault.username;
+            }
+            if (matchingVault.password && passInput && !passInput.value) {
+                passInput.value = matchingVault.password;
+                this._pass = matchingVault.password;
             }
         } else {
             if (userInput && userInput.dataset.autoMatched === 'true') {
                 userInput.value = '';
                 delete userInput.dataset.autoMatched;
                 this._user = '';
+            }
+            if (passInput) {
+                passInput.value = '';
+                this._pass = '';
             }
         }
 
@@ -364,7 +402,7 @@ const SMBPage = {
 
     openFolder(folderName) {
         if (this._path) {
-            this._path += '\\' + folderName;
+            this._path = this._path.replace(/\\+$/, '') + '\\' + folderName;
         } else {
             this._path = folderName;
         }
@@ -373,7 +411,7 @@ const SMBPage = {
 
     navigateUp() {
         if (!this._path) return;
-        const parts = this._path.split('\\');
+        const parts = this._path.split('\\').filter(Boolean);
         parts.pop();
         this._path = parts.join('\\');
         this.loadDirectory();
@@ -383,7 +421,7 @@ const SMBPage = {
         if (index === -1) {
             this._path = '';
         } else {
-            const parts = this._path.split('\\');
+            const parts = this._path.split('\\').filter(Boolean);
             this._path = parts.slice(0, index + 1).join('\\');
         }
         this.loadDirectory();
@@ -393,6 +431,26 @@ const SMBPage = {
         if (this._ip && this._share) {
             this.loadDirectory();
         }
+    },
+
+    submitInlineAuth() {
+        const u = document.getElementById('inline-smb-user')?.value || '';
+        const p = document.getElementById('inline-smb-pass')?.value || '';
+        if (u) {
+            const userInput = document.getElementById('smb-user');
+            if (userInput) userInput.value = u;
+            this._user = u;
+        }
+        if (p) {
+            const passInput = document.getElementById('smb-pass');
+            if (passInput) passInput.value = p;
+            this._pass = p;
+        }
+        if (this._ip && (u || p)) {
+            this._hostCredsCache[this._ip] = { user: u, pass: p };
+        }
+        this._updateCreds();
+        this.loadDirectory();
     },
 
     async loadDirectory() {
@@ -420,21 +478,72 @@ const SMBPage = {
                 password: this._pass
             });
 
+            // If successful and user/pass were used, cache them for this IP
+            if (this._user || this._pass) {
+                this._hostCredsCache[this._ip] = { user: this._user, pass: this._pass };
+            }
+
+            // Dynamically update the share status in our tree to READ
+            const dev = this._devices.find(d => d.ip === this._ip);
+            if (dev) {
+                try {
+                    const n = JSON.parse(dev.notes);
+                    const sObj = n.smb_audit?.details?.find(s => s.name.toLowerCase() === this._share.toLowerCase());
+                    if (sObj && !sObj.accessible) {
+                        sObj.accessible = true;
+                        sObj.permission = 'Read Access';
+                        dev.notes = JSON.stringify(n);
+                        this._renderNetworkTree();
+                    }
+                } catch(err) {}
+            }
+
             this._renderDirectoryItems(contentEl, data.items);
             countEl.textContent = `${data.items.length} item${data.items.length !== 1 ? 's' : ''}`;
             
         } catch (e) {
+            // If share does not exist, remove it from the tree
+            if (e.message.includes('does not exist') || e.message.includes('network name cannot be found') || e.message.includes('WinError 67')) {
+                const dev = this._devices.find(d => d.ip === this._ip);
+                if (dev) {
+                    try {
+                        const n = JSON.parse(dev.notes);
+                        if (n.smb_audit && n.smb_audit.details) {
+                            n.smb_audit.details = n.smb_audit.details.filter(s => s.name.toLowerCase() !== this._share.toLowerCase());
+                            dev.notes = JSON.stringify(n);
+                            this._renderNetworkTree();
+                        }
+                    } catch(err) {}
+                }
+            }
+
             const activeAcc = this._user || this._sessionInfo?.full_account || 'Active Station Session';
             
             // Check if there is a discovered vault target for this IP
             const matchingVault = this._sessionInfo?.vault_targets?.find(v => v.ip === this._ip || v.target.includes(this._ip));
             const vaultHint = matchingVault 
-                ? `<div style="margin-top:12px; padding:10px; background:rgba(0, 240, 255, 0.08); border-radius:6px; border:1px solid rgba(0, 240, 255, 0.2);">
-                    <div style="font-size:0.8rem; color:var(--cyan); margin-bottom:6px;">💡 Discovered Credential in Station Vault: <strong>${matchingVault.username || matchingVault.target}</strong></div>
-                    <button class="btn btn-sm btn-primary" onclick="SMBPage.useVaultTarget('${matchingVault.ip || this._ip}', '${matchingVault.username}')" style="font-size:0.75rem; padding:3px 10px;">
-                        Authenticate as ${matchingVault.username}
+                ? `<div style="margin-top:12px; padding:10px; background:rgba(0, 240, 255, 0.08); border-radius:6px; border:1px solid rgba(0, 240, 255, 0.2); width:100%;">
+                    <div style="font-size:0.8rem; color:var(--cyan); margin-bottom:6px;">💡 Discovered Target Account: <strong>${matchingVault.username || matchingVault.target}</strong></div>
+                    <button class="btn btn-sm btn-primary" onclick="SMBPage.useVaultTarget('${matchingVault.ip || this._ip}', '${matchingVault.username}', '${matchingVault.password || ''}')" style="font-size:0.75rem; padding:3px 10px;">
+                        Use Discovered Account (${matchingVault.username})
                     </button>
                    </div>`
+                : '';
+
+            const isAuthError = e.message.includes('STATUS_LOGON_FAILURE') || e.message.includes('0xc000006d') || e.message.includes('Authentication failed') || e.message.includes('1326') || e.message.includes('401') || e.message.includes('password is incorrect');
+            const inlineAuthForm = isAuthError 
+                ? `
+                   <div style="margin-top:14px; padding:14px; background:rgba(255,255,255,0.04); border-radius:6px; border:1px solid rgba(255,255,255,0.1); width:100%;">
+                       <div style="font-size:0.82rem; color:var(--cyan); margin-bottom:10px; font-weight:600;">Authenticate to ${this._ip}:</div>
+                       <div style="display:flex; flex-direction:column; gap:8px;">
+                           <input type="text" id="inline-smb-user" class="form-control form-control-sm" placeholder="Username (e.g. Administrator)" value="${this._user || (matchingVault?.username || '')}">
+                           <input type="password" id="inline-smb-pass" class="form-control form-control-sm" placeholder="Password" value="${this._pass || (matchingVault?.password || '')}" onkeydown="if(event.key==='Enter') SMBPage.submitInlineAuth()">
+                           <button class="btn btn-sm btn-primary" onclick="SMBPage.submitInlineAuth()" style="background:var(--purple); color:white; border:none; padding:6px 12px; margin-top:2px;">
+                               Unlock & Browse Share
+                           </button>
+                       </div>
+                   </div>
+                  `
                 : '';
 
             contentEl.innerHTML = `
@@ -450,6 +559,7 @@ const SMBPage = {
                         ${e.message}
                     </div>
                     ${vaultHint}
+                    ${inlineAuthForm}
                 </div>
             `;
             countEl.textContent = 'Access Denied';
@@ -464,7 +574,7 @@ const SMBPage = {
         `;
 
         if (this._path) {
-            const parts = this._path.split('\\');
+            const parts = this._path.split('\\').filter(Boolean);
             parts.forEach((p, i) => {
                 html += `
                     <span style="color:var(--text-muted)">\\</span>
