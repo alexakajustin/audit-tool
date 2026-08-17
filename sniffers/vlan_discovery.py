@@ -1609,6 +1609,10 @@ class VLANDiscovery:
                     pass
 
             if device_id:
+                # Ignore self/local host advertisements
+                if (src_mac and src_mac == getattr(self, "_local_mac", "").upper()) or device_id.upper() == socket.gethostname().upper():
+                    return
+
                 self._register_switch(
                     device_id=device_id,
                     management_ip=mgmt_ip,
@@ -1642,10 +1646,8 @@ class VLANDiscovery:
                     except Exception:
                         pass
 
-                print(f"[VLANDiscovery] CDP: Switch '{device_id}' ({platform}), Port: {local_port}, Native VLAN: {native_vlan}, Mgmt IP: {mgmt_ip}")
-
         except Exception as e:
-            print(f"[VLANDiscovery] CDP parse error: {e}")
+            pass
 
     def _process_lldp(self, pkt) -> None:
         """Parse LLDP packets for switch/VLAN intelligence."""
@@ -1742,6 +1744,10 @@ class VLANDiscovery:
                     device_id = src_mac or "Unknown LLDP Device"
 
             if device_id:
+                # Ignore self/local host advertisements
+                if (src_mac and src_mac == getattr(self, "_local_mac", "").upper()) or device_id.upper() == socket.gethostname().upper():
+                    return
+
                 self._register_switch(
                     device_id=device_id,
                     management_ip=mgmt_ip,
@@ -1774,10 +1780,8 @@ class VLANDiscovery:
                     except Exception:
                         pass
 
-                print(f"[VLANDiscovery] LLDP: Switch '{device_id}', Port: {port_desc}, VLAN: {vlan_id}, Mgmt IP: {mgmt_ip}")
-
         except Exception as e:
-            print(f"[VLANDiscovery] LLDP parse error: {e}")
+            pass
 
     def _process_dot1q(self, pkt) -> None:
         """Extract VLAN IDs from 802.1Q tagged frames."""
