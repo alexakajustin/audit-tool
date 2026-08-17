@@ -2292,26 +2292,7 @@ class VLANDiscovery:
                     metric=metric,
                 )
 
-        # Register gateway and DHCP server in central inventory
-        try:
-            import api
-            if hasattr(api, 'inventory') and api.inventory:
-                if gateway and gateway != "0.0.0.0":
-                    api.inventory.upsert_device(Device(
-                        mac=f"ROUTED-{gateway}",
-                        ip=gateway,
-                        hostname=f"Gateway-{gateway}",
-                        discovery_methods=[f"VLAN_SUBNET_{source_protocol.upper()}" if source_protocol else "VLAN_SUBNET"]
-                    ))
-                if dhcp_server and dhcp_server != "0.0.0.0":
-                    api.inventory.upsert_device(Device(
-                        mac=f"ROUTED-{dhcp_server}",
-                        ip=dhcp_server,
-                        hostname=f"DHCP-{dhcp_server}",
-                        discovery_methods=["VLAN_DHCP"]
-                    ))
-        except Exception:
-            pass
+
 
     def _register_switch(
         self,

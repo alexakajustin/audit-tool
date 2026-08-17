@@ -451,8 +451,6 @@ const VLANsPage = {
             <tr>
                 <td style="font-family:var(--font-mono);font-size:0.8rem;color:var(--cyan)">${this._escHtml(s.cidr)}</td>
                 <td>${this._escHtml(s.gateway || '—')}</td>
-                <td>${s.vlan_id != null ? `<span class="vlan-id-badge">${s.vlan_id}</span>` : '—'}</td>
-                <td>${s.device_count || '—'}</td>
                 <td><span class="protocol-tag" style="border-color:var(--purple);color:var(--purple);font-size:0.7rem">${(s.source_protocol || '—').toUpperCase()}</span></td>
                 <td>${this._escHtml(s.source_router || '—')}</td>
                 <td><button class="btn btn-sm btn-outline-cyan" onclick="VLANsPage.scanSubnet('${s.cidr}')" style="font-size:0.7rem;padding:2px 6px">Scan Subnet</button></td>
@@ -463,7 +461,7 @@ const VLANsPage = {
             <div class="table-wrapper">
                 <table class="data-table">
                     <thead><tr>
-                        <th>Subnet CIDR</th><th>Gateway</th><th>VLAN</th><th>Hosts</th><th>Source</th><th>Router</th><th>Actions</th>
+                        <th>Subnet CIDR</th><th>Gateway</th><th>Source</th><th>Router</th><th>Actions</th>
                     </tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
