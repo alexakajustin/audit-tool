@@ -349,8 +349,13 @@ class ArpSpoofer:
 
     def _spoof_loop(self) -> None:
         """Background thread: continuously send spoofed ARP replies."""
+        s = None
         try:
-            from scapy.all import ARP, Ether, sendp
+            from scapy.all import ARP, Ether, conf
+
+            # Open a persistent L2 socket to avoid the massive overhead
+            # of opening and closing a socket on every sendp call.
+            s = conf.L2socket(iface=self._interface)
 
             self._last_refresh = time.time()
 
@@ -383,7 +388,7 @@ class ArpSpoofer:
                             hwdst=target_mac,
                         )
 
-                        sendp(pkt_to_target, iface=self._interface, verbose=False)
+                        s.send(pkt_to_target)
 
                         with self._lock:
                             self._packets_sent += 1
@@ -408,6 +413,11 @@ class ArpSpoofer:
             traceback.print_exc()
         finally:
             self._running = False
+            if s is not None:
+                try:
+                    s.close()
+                except Exception:
+                    pass
             # Clear intercepted IPs in sniffer
             if self._sniffer:
                 try:

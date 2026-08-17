@@ -16,8 +16,10 @@ import os
 import struct
 import threading
 import time
-from collections import OrderedDict
+import queue
+from collections import OrderedDict, deque
 from typing import Callable, Optional
+from config import Config
 
 from core.base import BaseSniffer
 from core.models import CaptureResult, PacketInfo
@@ -29,12 +31,15 @@ class PassiveSniffer(BaseSniffer):
     def __init__(self):
         self._running = False
         self._thread: Optional[threading.Thread] = None
-        self._packets: list[PacketInfo] = []
+        self._worker_thread: Optional[threading.Thread] = None
+        self._packet_queue = queue.Queue(maxsize=20000)
+        self._max_packets = getattr(Config, 'SNIFFER_MAX_PACKETS', 10000)
+        self._packets: deque[PacketInfo] = deque(maxlen=self._max_packets)
         self._stats: dict[str, int] = {}       # protocol -> count
         self._unique_hosts: set[str] = set()
         self._start_time: float = 0.0
         self._on_packet: Optional[Callable[[PacketInfo], None]] = None
-        self._raw_packets = []                   # Raw Scapy packets for pcap export
+        self._raw_packets: deque = deque(maxlen=self._max_packets) # Raw Scapy packets for pcap export
         self._lock = threading.Lock()
 
         # ── Network Intelligence tracking ───────────────────────
@@ -99,8 +104,14 @@ class PassiveSniffer(BaseSniffer):
             return
 
         self._running = True
-        self._packets = []
-        self._raw_packets = []
+        self._packets = deque(maxlen=self._max_packets)
+        self._raw_packets = deque(maxlen=self._max_packets)
+        # clear queue
+        while not self._packet_queue.empty():
+            try:
+                self._packet_queue.get_nowait()
+            except queue.Empty:
+                break
         self._stats = {}
         self._unique_hosts = set()
         self._start_time = time.time()
@@ -136,11 +147,19 @@ class PassiveSniffer(BaseSniffer):
             daemon=True,
         )
         self._thread.start()
+        
+        self._worker_thread = threading.Thread(
+            target=self._worker_loop,
+            daemon=True,
+        )
+        self._worker_thread.start()
 
     def stop(self) -> CaptureResult:
         self._running = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=5)
+        if self._worker_thread and self._worker_thread.is_alive():
+            self._worker_thread.join(timeout=5)
 
         duration = time.time() - self._start_time if self._start_time else 0
 
@@ -207,7 +226,7 @@ class PassiveSniffer(BaseSniffer):
     def get_recent_packets(self, count: int = 50) -> list[dict]:
         """Get the most recent N packets as dicts."""
         with self._lock:
-            return [p.to_dict() for p in self._packets[-count:]]
+            return [p.to_dict() for p in list(self._packets)[-count:]]
 
     def set_intercepted_ips(self, ips: set[str]) -> None:
         """Update the set of IPs currently being MITM'd (called from ArpSpoofer)."""
@@ -602,7 +621,7 @@ class PassiveSniffer(BaseSniffer):
             # The rest is encrypted for real QUIC, but some implementations
             # and the initial crypto handshake may have the ClientHello visible.
             # Search for TLS ClientHello pattern in remaining bytes
-            remaining = payload[offset:]
+            remaining = payload[offset:offset+2048]
             return self._find_sni_in_bytes(remaining)
 
         except Exception:
@@ -612,29 +631,29 @@ class PassiveSniffer(BaseSniffer):
     def _find_sni_in_bytes(self, data: bytes) -> str:
         """Search for a TLS SNI extension pattern anywhere in raw bytes."""
         try:
-            # Look for the server_name extension type (0x00 0x00) followed by
-            # reasonable-looking SNI data. This is a heuristic scan.
+            search_data = data[:2048]
             i = 0
-            while i < len(data) - 10:
-                # Look for extension type 0x0000 (server_name)
-                if data[i] == 0x00 and data[i + 1] == 0x00:
-                    ext_len = (data[i + 2] << 8) | data[i + 3]
-                    if 4 < ext_len < 256 and i + 4 + ext_len <= len(data):
-                        # SNI list: list_len(2), name_type(1), name_len(2), name
-                        name_offset = i + 4
-                        if name_offset + 5 <= len(data):
-                            name_type = data[name_offset + 2]
-                            name_len = (data[name_offset + 3] << 8) | data[name_offset + 4]
-                            if name_type == 0x00 and 3 < name_len < 253:
-                                if name_offset + 5 + name_len <= len(data):
-                                    name = data[name_offset + 5: name_offset + 5 + name_len]
-                                    try:
-                                        sni = name.decode("ascii", errors="ignore").strip()
-                                        # Validate it looks like a domain
-                                        if sni and "." in sni and len(sni) > 3 and " " not in sni:
-                                            return sni
-                                    except Exception:
-                                        pass
+            while True:
+                i = search_data.find(b"\x00\x00", i)
+                if i == -1 or i >= len(search_data) - 9:
+                    break
+                ext_len = (search_data[i + 2] << 8) | search_data[i + 3]
+                if 4 < ext_len < 256 and i + 4 + ext_len <= len(search_data):
+                    # SNI list: list_len(2), name_type(1), name_len(2), name
+                    name_offset = i + 4
+                    if name_offset + 5 <= len(search_data):
+                        name_type = search_data[name_offset + 2]
+                        name_len = (search_data[name_offset + 3] << 8) | search_data[name_offset + 4]
+                        if name_type == 0x00 and 3 < name_len < 253:
+                            if name_offset + 5 + name_len <= len(search_data):
+                                name = search_data[name_offset + 5: name_offset + 5 + name_len]
+                                try:
+                                    sni = name.decode("ascii", errors="strict").strip()
+                                    # Validate it looks like a clean domain name
+                                    if sni and "." in sni and len(sni) > 3 and " " not in sni and not sni.startswith("."):
+                                        return sni
+                                except Exception:
+                                    pass
                 i += 1
         except Exception:
             pass
@@ -702,34 +721,10 @@ class PassiveSniffer(BaseSniffer):
                 if not self._running:
                     return
 
-                info = self._parse_packet(pkt)
-                if info:
-                    # Ignore host PC's own local traffic for auditing metrics
-                    is_host_traffic = (
-                        (self._local_ip and (info.src == self._local_ip or info.dst == self._local_ip))
-                        or info.src == "127.0.0.1"
-                        or info.dst == "127.0.0.1"
-                    )
-
-                    with self._lock:
-                        self._packets.append(info)
-                        self._raw_packets.append(pkt)
-
-                        if not is_host_traffic:
-                            self._stats[info.protocol] = self._stats.get(info.protocol, 0) + 1
-                            if info.src:
-                                self._unique_hosts.add(info.src)
-                            if info.dst:
-                                self._unique_hosts.add(info.dst)
-
-                            # ── Track network intelligence for network devices ──
-                            self._track_intelligence(pkt, info)
-
-                    if self._on_packet:
-                        try:
-                            self._on_packet(info)
-                        except Exception:
-                            pass
+                try:
+                    self._packet_queue.put(pkt, block=False)
+                except queue.Full:
+                    pass  # Drop packet if processing is too slow rather than crashing network
 
             print(f"[Sniffer] Starting passive capture on '{interface}' (filter: '{bpf_filter}')")
             if self._local_ip:
@@ -749,6 +744,45 @@ class PassiveSniffer(BaseSniffer):
             traceback.print_exc()
         finally:
             self._running = False
+
+    def _worker_loop(self) -> None:
+        """Background thread — processes packets off the queue to avoid blocking Scapy."""
+        while self._running:
+            try:
+                pkt = self._packet_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+
+            try:
+                info = self._parse_packet(pkt)
+                if info:
+                    is_host_traffic = (
+                        (self._local_ip and (info.src == self._local_ip or info.dst == self._local_ip))
+                        or info.src == "127.0.0.1"
+                        or info.dst == "127.0.0.1"
+                    )
+
+                    with self._lock:
+                        self._packets.append(info)
+                        self._raw_packets.append(pkt)
+
+                        if not is_host_traffic:
+                            self._stats[info.protocol] = self._stats.get(info.protocol, 0) + 1
+                            if info.src:
+                                self._unique_hosts.add(info.src)
+                            if info.dst:
+                                self._unique_hosts.add(info.dst)
+
+                            # Track intelligence
+                            self._track_intelligence(pkt, info)
+
+                    if self._on_packet:
+                        try:
+                            self._on_packet(info)
+                        except Exception:
+                            pass
+            except Exception as e:
+                pass
 
     def _track_intelligence(self, pkt, info: PacketInfo) -> None:
         """Extract network intelligence from packets (called inside the lock)."""
@@ -772,17 +806,41 @@ class PassiveSniffer(BaseSniffer):
                 self._mac_to_ip[info.src_mac] = info.src
 
             # Track DNS queries (what sites are being browsed) — GLOBAL + PER-DEVICE
+            dns_pkt = None
             if pkt.haslayer(DNS):
-                dns = pkt[DNS]
-                if dns.qr == 0 and dns.qd:  # Query
-                    qname = dns.qd.qname
+                dns_pkt = pkt[DNS]
+            elif pkt.haslayer(UDP) and (info.src_port == 53 or info.dst_port == 53 or pkt[UDP].sport == 53 or pkt[UDP].dport == 53):
+                if pkt.haslayer(Raw):
+                    try:
+                        dns_pkt = DNS(bytes(pkt[Raw].load))
+                    except Exception:
+                        pass
+                elif hasattr(pkt[UDP], "payload") and pkt[UDP].payload:
+                    try:
+                        dns_pkt = DNS(bytes(pkt[UDP].payload))
+                    except Exception:
+                        pass
+            elif pkt.haslayer(TCP) and (info.src_port == 53 or info.dst_port == 53 or pkt[TCP].sport == 53 or pkt[TCP].dport == 53):
+                if pkt.haslayer(Raw):
+                    try:
+                        raw_data = bytes(pkt[Raw].load)
+                        if len(raw_data) > 2:
+                            dns_pkt = DNS(raw_data[2:])
+                    except Exception:
+                        pass
+
+            if dns_pkt and hasattr(dns_pkt, "qr"):
+                if dns_pkt.qr == 0 and dns_pkt.qd:  # Query
+                    qname = dns_pkt.qd.qname
                     if isinstance(qname, bytes):
                         qname = qname.decode("utf-8", errors="ignore")
                     qname = str(qname).rstrip(".")
                     if qname and len(qname) > 3 and "." in qname:
+                        # Global DNS tracking
+                        self._dns_queries[qname] = self._dns_queries.get(qname, 0) + 1
+
                         querier = info.src
                         if querier and querier != self._local_ip:
-                            self._dns_queries[qname] = self._dns_queries.get(qname, 0) + 1
                             # Per-device DNS tracking
                             if querier not in self._device_dns:
                                 self._device_dns[querier] = OrderedDict()
@@ -793,13 +851,11 @@ class PassiveSniffer(BaseSniffer):
 
                         # Remember who asked this query so we can attribute the response
                         try:
-                            txid = dns.id
+                            txid = dns_pkt.id
                             if txid is not None and info.src:
                                 key = f"{txid}:{info.dst}"  # txid + DNS server = unique query
                                 self._dns_pending_queries[key] = info.src
-                                # Cap size to prevent memory leak
                                 if len(self._dns_pending_queries) > 10000:
-                                    # Remove oldest half
                                     keys = list(self._dns_pending_queries.keys())
                                     for k in keys[:5000]:
                                         del self._dns_pending_queries[k]
@@ -807,19 +863,21 @@ class PassiveSniffer(BaseSniffer):
                             pass
 
                 # ── DNS Response Parsing (IP→Domain reverse map) ─────
-                elif dns.qr == 1 and dns.ancount and dns.ancount > 0:
-                    # Extract the queried name
+                elif dns_pkt.qr == 1 and hasattr(dns_pkt, "ancount") and dns_pkt.ancount and dns_pkt.ancount > 0:
                     query_name = ""
-                    if dns.qd:
-                        qn = dns.qd.qname
+                    if dns_pkt.qd:
+                        qn = dns_pkt.qd.qname
                         if isinstance(qn, bytes):
                             qn = qn.decode("utf-8", errors="ignore")
                         query_name = str(qn).rstrip(".")
 
+                    if query_name and "." in query_name and not query_name.endswith(".arpa"):
+                        self._dns_queries[query_name] = self._dns_queries.get(query_name, 0) + 1
+
                     # Find the original querier device from pending queries
                     original_querier = ""
                     try:
-                        txid = dns.id
+                        txid = dns_pkt.id
                         if txid is not None:
                             key = f"{txid}:{info.src}"  # response src = DNS server
                             original_querier = self._dns_pending_queries.pop(key, "")
@@ -834,25 +892,24 @@ class PassiveSniffer(BaseSniffer):
                         if original_querier and not query_name.endswith(".arpa"):
                             if original_querier not in self._device_dns:
                                 self._device_dns[original_querier] = OrderedDict()
-                            # Only add if not already tracked from the query itself
                             if query_name not in self._device_dns.get(original_querier, {}):
                                 self._device_dns[original_querier][query_name] = 1
+                            self._add_timeline_entry(original_querier, query_name, "DNS", "dns_resolved")
+                            self._track_category(original_querier, query_name)
 
                         # Parse answer records to map resolved IPs back to the domain
                         try:
-                            for i in range(min(dns.ancount, 20)):
-                                rr = dns.an[i] if hasattr(dns.an, '__getitem__') else dns.an
+                            for i in range(min(dns_pkt.ancount, 20)):
+                                rr = dns_pkt.an[i] if hasattr(dns_pkt.an, '__getitem__') else dns_pkt.an
                                 if hasattr(rr, 'rdata'):
                                     rdata = str(rr.rdata)
-                                    # Check if rdata is an IP address
                                     try:
                                         import ipaddress
                                         ipaddress.ip_address(rdata)
-                                        # Valid IP → map it back to the domain
-                                        if len(self._dns_reverse) < 50000:  # Safety cap
+                                        if len(self._dns_reverse) < 50000:
                                             self._dns_reverse[rdata] = query_name
                                     except (ValueError, TypeError):
-                                        pass  # CNAME or other non-IP record
+                                        pass
                         except Exception:
                             pass
 
@@ -877,11 +934,13 @@ class PassiveSniffer(BaseSniffer):
             # Even on HTTPS, the TLS ClientHello sends the server name in cleartext!
             if pkt.haslayer(TCP) and pkt.haslayer(Raw):
                 tcp = pkt[TCP]
-                if tcp.dport in (443, 8443, 993, 995, 465, 636, 989, 990, 5061):
+                if tcp.dport in (443, 8443, 993, 995, 465, 636, 989, 990, 5061) or tcp.sport in (443, 8443):
                     try:
                         payload = bytes(pkt[Raw].load)
                         sni = self._extract_tls_sni(payload)
                         if sni:
+                            # Add to global browsing queries
+                            self._dns_queries[sni] = self._dns_queries.get(sni, 0) + 1
                             # Per-device SNI tracking
                             client_ip = info.src
                             if client_ip:
@@ -918,6 +977,8 @@ class PassiveSniffer(BaseSniffer):
                         payload = bytes(pkt[Raw].load)
                         quic_sni = self._extract_quic_sni(payload)
                         if quic_sni:
+                            # Add to global browsing queries
+                            self._dns_queries[quic_sni] = self._dns_queries.get(quic_sni, 0) + 1
                             client_ip = info.src
                             if client_ip:
                                 if client_ip not in self._device_sni:
@@ -1282,42 +1343,37 @@ class PassiveSniffer(BaseSniffer):
             # TLS record: ContentType(1) Version(2) Length(2) HandshakeType(1) ...
             content_type = payload[0]
             if content_type != 0x16:  # Not a Handshake record
-                return ""
+                return self._find_sni_in_bytes(payload)
 
             handshake_type = payload[5]
             if handshake_type != 0x01:  # Not ClientHello
-                return ""
-
-            # ClientHello structure:
-            # HandshakeType(1) Length(3) Version(2) Random(32) SessionIDLen(1) SessionID(var)
-            # CipherSuitesLen(2) CipherSuites(var) CompressionLen(1) Compression(var)
-            # ExtensionsLen(2) Extensions(var)
+                return self._find_sni_in_bytes(payload)
 
             offset = 5 + 1 + 3 + 2 + 32  # Skip to SessionID length (offset 43)
 
             if offset >= len(payload):
-                return ""
+                return self._find_sni_in_bytes(payload)
 
             # Skip Session ID
             session_id_len = payload[offset]
             offset += 1 + session_id_len
 
             if offset + 2 > len(payload):
-                return ""
+                return self._find_sni_in_bytes(payload)
 
             # Skip Cipher Suites
             cipher_suites_len = (payload[offset] << 8) | payload[offset + 1]
             offset += 2 + cipher_suites_len
 
             if offset + 1 > len(payload):
-                return ""
+                return self._find_sni_in_bytes(payload)
 
             # Skip Compression Methods
             compression_len = payload[offset]
             offset += 1 + compression_len
 
             if offset + 2 > len(payload):
-                return ""
+                return self._find_sni_in_bytes(payload)
 
             # Extensions
             extensions_len = (payload[offset] << 8) | payload[offset + 1]
@@ -1340,13 +1396,14 @@ class PassiveSniffer(BaseSniffer):
                             sni = server_name.decode("ascii", errors="ignore").strip()
                             if sni and "." in sni and len(sni) > 3:
                                 return sni
-                    return ""
+                    break
 
                 offset += ext_len
 
+            return self._find_sni_in_bytes(payload)
+
         except Exception:
-            pass
-        return ""
+            return self._find_sni_in_bytes(payload)
 
     def _guess_os(self, user_agent: str) -> str:
         """Guess the operating system from an HTTP User-Agent string."""
@@ -1376,7 +1433,7 @@ class PassiveSniffer(BaseSniffer):
     def _parse_packet(self, pkt) -> Optional[PacketInfo]:
         """Parse a Scapy packet into a PacketInfo summary with enhanced protocol detection."""
         try:
-            from scapy.all import IP, TCP, UDP, ARP, ICMP, DNS, DHCP, Ether, IPv6
+            from scapy.all import IP, TCP, UDP, ARP, ICMP, DNS, DHCP, Ether, IPv6, Raw
 
             ts = float(pkt.time) if hasattr(pkt, "time") else time.time()
             size = len(pkt)
@@ -1485,9 +1542,23 @@ class PassiveSniffer(BaseSniffer):
                     elif dst_port == 67 or dst_port == 68 or src_port == 67 or src_port == 68:
                         protocol = "DHCP"
                         summary = f"DHCP {src} → {dst}"
+                    elif dst_port == 53 or src_port == 53:
+                        protocol = "DNS"
+                        qname = ""
+                        if pkt.haslayer(Raw):
+                            try:
+                                d_pkt = DNS(bytes(pkt[Raw].load))
+                                if d_pkt.qd:
+                                    qn = d_pkt.qd.qname
+                                    if isinstance(qn, bytes):
+                                        qn = qn.decode("utf-8", errors="ignore")
+                                    qname = str(qn).rstrip(".")
+                            except Exception:
+                                pass
+                        summary = f"DNS {src}:{src_port} → {dst}:{dst_port} {qname}".strip()
                     else:
                         known_udp = {
-                            53: "DNS", 123: "NTP", 161: "SNMP", 162: "SNMP-Trap",
+                            123: "NTP", 161: "SNMP", 162: "SNMP-Trap",
                             514: "Syslog", 69: "TFTP", 500: "IKE",
                             4500: "IPSec-NAT", 1194: "OpenVPN",
                         }
