@@ -433,7 +433,18 @@ const DiscoveryPage = {
                                 ).join('') : '<span style="color:var(--text-muted)">—</span>'}</td>
                                 <td>${d.discovery_methods.map(m =>
                                     `<span class="badge badge-scanner" style="margin:1px;font-size:0.65rem">${m}</span>`
-                                ).join('')}</td>
+                                ).join('')}
+                                ${(() => {
+                                    try {
+                                        const n = JSON.parse(d.notes);
+                                        if (n.smb_audit) {
+                                            const accessible = n.smb_audit.details.filter(x => x.accessible).length;
+                                            return `<div style="margin-top:4px;font-size:0.75rem;color:var(--purple)"><b>SMB:</b> ${n.smb_audit.shares_found} shares (${accessible} readable)</div>`;
+                                        }
+                                    } catch(e) {}
+                                    return '';
+                                })()}
+                                </td>
                             </tr>
                         `).join('')}
                     </tbody>

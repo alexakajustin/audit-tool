@@ -55,6 +55,9 @@ const API = {
     getScanStatus()     { return this.get('/api/discovery/status'); },
     stopScan()          { return this.post('/api/discovery/stop'); },
     scanPorts(config)   { return this.post('/api/discovery/scan_ports', config); },
+    scanSMB(config)     { return this.post('/api/discovery/scan_smb', config); },
+    listSMBDirectory(config) { return this.post('/api/discovery/smb_listdir', config); },
+    getSMBSessionInfo() { return this.get('/api/discovery/smb_session_info'); },
 
     // ── Passive Discovery ─────────────────────────────────
     getPassiveDiscoveryStatus() { return this.get('/api/passive-discovery/status'); },

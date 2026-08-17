@@ -144,6 +144,16 @@ const InventoryPage = {
                                             `<span class="badge badge-scanner" style="margin:1px">${p.port}</span>`
                                         ).join('') + (d.ports.length > 5 ? `<span style="color:var(--text-muted)">+${d.ports.length - 5}</span>` : '')
                                         : '—'}
+                                    ${(() => {
+                                        try {
+                                            const n = JSON.parse(d.notes);
+                                            if (n.smb_audit) {
+                                                const accessible = n.smb_audit.details.filter(x => x.accessible).length;
+                                                return `<div style="margin-top:4px;font-size:0.75rem;color:var(--purple)"><b>SMB:</b> ${n.smb_audit.shares_found} shares (${accessible} readable)</div>`;
+                                            }
+                                        } catch(e) {}
+                                        return '';
+                                    })()}
                                 </td>
                                 <td style="color:var(--text-muted);font-size:0.78rem">${this._formatTime(d.last_seen)}</td>
                                 <td>
