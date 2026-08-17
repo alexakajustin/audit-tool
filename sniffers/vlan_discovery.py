@@ -747,12 +747,11 @@ class VLANDiscovery:
                     break
                 try:
                     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock.settimeout(0.3)  # Very short timeout for fast scanning
+                    sock.settimeout(0.25)
                     result = sock.connect_ex((target_ip, port))
                     sock.close()
                     if result == 0:
                         open_ports.append(port)
-                        break  # One open port is enough to confirm reachability
                 except Exception:
                     pass
 
@@ -779,7 +778,8 @@ class VLANDiscovery:
                 self._inject_device_to_inventory(
                     ip=target_ip,
                     hostname=f"Gateway-{target_ip}",
-                    method="GATEWAY_SWEEP"
+                    method="GATEWAY_SWEEP",
+                    ports=open_ports,
                 )
 
                 # Infer a VLAN from the third octet
@@ -1313,19 +1313,30 @@ class VLANDiscovery:
             )
 
 
-    def _inject_device_to_inventory(self, ip: str, mac: str = "", hostname: str = "", method: str = "") -> None:
+    def _inject_device_to_inventory(self, ip: str, mac: str = "", hostname: str = "", method: str = "", ports: list[int] = None) -> None:
         """Helper to inject a discovered device into the central inventory."""
         try:
             import api
             if hasattr(api, 'inventory') and api.inventory:
                 from network.mac_lookup import lookup_vendor
+                from core.models import PortInfo
                 actual_mac = mac if mac else f"ROUTED-{ip}"
+                port_objs = []
+                if ports:
+                    svc_names = {80: "HTTP", 443: "HTTPS", 22: "SSH", 23: "Telnet", 8080: "HTTP-Alt", 8443: "HTTPS-Alt", 53: "DNS"}
+                    for p in ports:
+                        if isinstance(p, int):
+                            port_objs.append(PortInfo(port=p, protocol="tcp", state="open", service=svc_names.get(p, "unknown")))
+                        elif isinstance(p, PortInfo):
+                            port_objs.append(p)
+
                 api.inventory.upsert_device(Device(
                     mac=actual_mac,
                     ip=ip,
                     hostname=hostname,
                     vendor=lookup_vendor(actual_mac) if mac else "",
                     status=DeviceStatus.ONLINE if mac else DeviceStatus.UNKNOWN,
+                    ports=port_objs,
                     discovery_methods=[method] if method else ["VLAN_DISCOVERY"]
                 ))
         except Exception:

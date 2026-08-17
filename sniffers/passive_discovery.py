@@ -464,6 +464,40 @@ class PassiveDiscovery:
             except Exception:
                 pass
 
+            # Fast background port probe for newly discovered LAN devices
+            if ip and not ip.startswith("127.") and not ip.startswith("0."):
+                threading.Thread(target=self._probe_device_ports, args=(dev,), daemon=True).start()
+
+    def _probe_device_ports(self, dev: Device) -> None:
+        """Background fast TCP port probe for newly discovered devices."""
+        import socket
+        from core.models import PortInfo
+        from scanners.port_scanner import TOP_25_PORTS, COMMON_PORTS
+
+        open_ports = []
+        for port in TOP_25_PORTS:
+            if not self._running:
+                break
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(0.25)
+                res = s.connect_ex((dev.ip, port))
+                s.close()
+                if res == 0:
+                    svc = COMMON_PORTS.get(port, "unknown")
+                    open_ports.append(PortInfo(port=port, protocol="tcp", state="open", service=svc))
+            except Exception:
+                pass
+
+        if open_ports:
+            with self._lock:
+                dev.ports = open_ports
+            if self._on_device_found:
+                try:
+                    self._on_device_found(dev)
+                except Exception:
+                    pass
+
     def _record_hit(self, protocol: str) -> None:
         """Record a protocol hit for statistics."""
         with self._lock:

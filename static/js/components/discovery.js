@@ -80,6 +80,10 @@ const DiscoveryPage = {
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                             Start Scan
                         </button>
+                        <button id="btn-scan-ports" class="btn btn-secondary" onclick="DiscoveryPage.scanAllPorts()" title="Rapidly scan top open ports on all discovered hosts">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                            Scan Open Ports
+                        </button>
                         <button id="btn-stop-scan" class="btn btn-danger" onclick="DiscoveryPage.stopScan()" style="display:none">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12"/></svg>
                             Stop Scan
@@ -296,6 +300,28 @@ const DiscoveryPage = {
         }
     },
 
+    async scanAllPorts() {
+        const btn = document.getElementById('btn-scan-ports');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Scanning...';
+        }
+        App.toast('Probing open ports on all discovered devices...', 'info');
+
+        try {
+            const data = await API.scanPorts({ profile: 'fast' });
+            App.toast(`Port scan complete! Discovered services on ${data.devices_with_open_ports} device(s)`, 'success');
+            await this._loadResults();
+        } catch (e) {
+            App.toast('Failed to scan ports: ' + e.message, 'error');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg> Scan Open Ports';
+            }
+        }
+    },
+
     async _checkExistingScan() {
         try {
             const status = await API.getScanStatus();
@@ -402,9 +428,9 @@ const DiscoveryPage = {
                                 <td>${d.vendor || '—'}</td>
                                 <td>${d.hostname || '—'}</td>
                                 <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis">${d.os || '—'}</td>
-                                <td>${d.ports.length > 0 ? d.ports.map(p =>
-                                    `<span class="badge badge-scanner" style="margin:1px">${p.port}/${p.protocol}</span>`
-                                ).join('') : '—'}</td>
+                                <td>${d.ports && d.ports.length > 0 ? d.ports.map(p =>
+                                    `<span class="badge badge-scanner" style="margin:1px;background:rgba(0,212,255,0.12);color:var(--cyan);border:1px solid rgba(0,212,255,0.3)" title="${p.service || ''} ${p.version || ''}">${p.port}/${p.protocol}${p.service && p.service !== 'unknown' ? ' (' + p.service + ')' : ''}</span>`
+                                ).join('') : '<span style="color:var(--text-muted)">—</span>'}</td>
                                 <td>${d.discovery_methods.map(m =>
                                     `<span class="badge badge-scanner" style="margin:1px;font-size:0.65rem">${m}</span>`
                                 ).join('')}</td>

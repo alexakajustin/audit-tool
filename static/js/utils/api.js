@@ -54,6 +54,7 @@ const API = {
     startScan(config)   { return this.post('/api/discovery/scan', config); },
     getScanStatus()     { return this.get('/api/discovery/status'); },
     stopScan()          { return this.post('/api/discovery/stop'); },
+    scanPorts(config)   { return this.post('/api/discovery/scan_ports', config); },
 
     // ── Passive Discovery ─────────────────────────────────
     getPassiveDiscoveryStatus() { return this.get('/api/passive-discovery/status'); },

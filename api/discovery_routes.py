@@ -91,6 +91,11 @@ def start_scan():
             pass
 
     def on_complete(result):
+        if result and result.devices:
+            try:
+                api.inventory.upsert_many(result.devices)
+            except Exception:
+                pass
         try:
             from flask_socketio import emit
             emit(
@@ -112,6 +117,45 @@ def start_scan():
         return jsonify({"error": "A scan is already running"}), 409
 
     return jsonify({"status": "started", "target": target.to_dict()})
+
+
+@discovery_bp.route("/api/discovery/scan_ports", methods=["POST"])
+def scan_device_ports():
+    """
+    On-demand TCP port scan for a specific IP or all devices in inventory.
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    ip = data.get("ip", "").strip()
+    profile = data.get("profile", "fast")
+
+    from scanners.port_scanner import PortScanner
+    scanner = PortScanner()
+
+    target_ips = []
+    if ip:
+        target_ips = [ip]
+    else:
+        devices = api.inventory.get_all()
+        target_ips = [d.ip for d in devices if d.ip and not d.ip.startswith("127.")]
+
+    if not target_ips:
+        return jsonify({"error": "No target IPs found to scan"}), 400
+
+    target = ScanTarget(
+        subnet=" ".join(target_ips),
+        options={"scan_type": profile},
+    )
+
+    result = scanner.scan(target)
+    for dev in result.devices:
+        api.inventory.upsert_device(dev)
+
+    return jsonify({
+        "status": "complete",
+        "scanned_count": len(target_ips),
+        "devices_with_open_ports": len(result.devices),
+        "devices": [d.to_dict() for d in result.devices],
+    })
 
 
 @discovery_bp.route("/api/discovery/status", methods=["GET"])

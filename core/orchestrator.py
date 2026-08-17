@@ -187,18 +187,26 @@ class _ScanJob:
         """Handle a newly discovered device — merge or add."""
         mac = device.mac
 
-        if mac in self._devices_by_mac:
+        # Match existing device by MAC or IP (handling placeholder MACs)
+        target_mac = mac
+        if target_mac not in self._devices_by_mac and device.ip:
+            for existing_mac, existing_dev in self._devices_by_mac.items():
+                if existing_dev.ip == device.ip:
+                    target_mac = existing_mac
+                    break
+
+        if target_mac in self._devices_by_mac:
             # Merge into existing
-            self._devices_by_mac[mac].merge(device)
+            self._devices_by_mac[target_mac].merge(device)
+            current_dev = self._devices_by_mac[target_mac]
         else:
             # New device
             self._devices_by_mac[mac] = device
+            current_dev = device
 
-        # Notify callback only for genuinely new devices
-        if mac not in self._seen_macs:
-            self._seen_macs.add(mac)
-            if self.on_device_found:
-                try:
-                    self.on_device_found(device)
-                except Exception:
-                    pass
+        # Notify callback to update inventory with latest merged info (including open ports)
+        if self.on_device_found:
+            try:
+                self.on_device_found(current_dev)
+            except Exception:
+                pass
