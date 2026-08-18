@@ -246,21 +246,56 @@ const SMBPage = {
                 // 1. Reload session info so vault targets update with decrypted passwords
                 await this._loadSessionInfo();
 
-                // 2. Automatically re-audit ALL servers with newly unlocked credentials concurrently
+                // 2. Emulate clicking every share for all matched targets to refresh permissions sequentially
                 const vaultTargets = this._sessionInfo?.vault_targets || [];
-                const serversToAudit = new Set();
-                this._devices.forEach(d => serversToAudit.add(d.ip));
-                vaultTargets.forEach(v => { if (v.ip) serversToAudit.add(v.ip); });
-
-                if (serversToAudit.size > 0) {
-                    try {
-                        const ipsToScan = Array.from(serversToAudit).join(' ');
-                        await API.scanSMB({ ip: ipsToScan });
-                    } catch(e) {}
+                
+                if (btn) {
+                    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Refreshing shares...';
                 }
 
-                // 3. Re-render the network tree with green permissions
-                await this._loadNetworkTree();
+                // Process sequentially to prevent Python socket crashes
+                for (const d of this._devices) {
+                    const match = vaultTargets.find(v => v.ip === d.ip || (v.target && v.target.includes(d.ip)));
+                    if (match && (match.username || match.password)) {
+                        try {
+                            const n = JSON.parse(d.notes);
+                            const shares = n.smb_audit?.details || [];
+                            let modified = false;
+                            
+                            for (const share of shares) {
+                                if (!share.accessible) {
+                                    try {
+                                        await API.listSMBDirectory({
+                                            ip: d.ip,
+                                            share: share.name,
+                                            path: '',
+                                            username: match.username || '',
+                                            password: match.password || ''
+                                        });
+                                        
+                                        share.accessible = true;
+                                        share.permission = 'Read Access';
+                                        modified = true;
+                                    } catch(err) {}
+                                }
+                            }
+                            
+                            if (modified) {
+                                d.notes = JSON.stringify(n);
+                            }
+                        } catch(e) {}
+                    }
+                }
+
+                // Restore button text
+                if (btn) {
+                    btn.textContent = `✅ Unlocked (${res.credentials_decrypted})`;
+                    btn.style.color = 'var(--green)';
+                    btn.style.borderColor = 'var(--green)';
+                }
+
+                // 3. Re-render the network tree with updated permissions locally (do not reload from backend!)
+                this._renderNetworkTree();
                 // 4. Auto-fill currently selected host or first available vault target
                 if (this._ip) {
                     const currentMatch = vaultTargets.find(v => v.ip === this._ip || (v.target && v.target.includes(this._ip)));

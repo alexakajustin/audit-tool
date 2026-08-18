@@ -195,9 +195,6 @@ class SMBAuditor(BaseScanner):
         target_user = username or (cached_match.get("username") if cached_match else "")
         target_pass = password or (cached_match.get("password") if cached_match else "")
 
-        if target_user and "\\" not in target_user and "@" not in target_user:
-            target_user = f"{ip}\\{target_user}"
-
         active_identity = target_user if target_user else f"{os.environ.get('USERDOMAIN', '')}\\{os.environ.get('USERNAME', '')} (Active Station Session)"
         try:
             if target_user and target_pass:

@@ -297,8 +297,6 @@ def smb_listdir():
         except Exception:
             pass
 
-    if username and "\\" not in username and "@" not in username:
-        username = f"{ip}\\{username}"
 
     import smbclient
     try:
