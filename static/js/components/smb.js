@@ -30,7 +30,7 @@ const SMBPage = {
                 
                 <!-- Station Session & Credential Discovery Banner -->
                 <div class="card" id="smb-session-card" style="padding:12px 18px; margin-bottom:0; background:linear-gradient(135deg, rgba(16, 26, 45, 0.95), rgba(24, 38, 64, 0.95)); border:1px solid rgba(0, 240, 255, 0.2);">
-                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
                         <div style="display:flex; align-items:center; gap:12px;">
                             <div style="width:36px; height:36px; border-radius:8px; background:rgba(0, 240, 255, 0.12); display:flex; align-items:center; justify-content:center; color:var(--cyan);">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -39,7 +39,7 @@ const SMBPage = {
                                 <div style="display:flex; align-items:center; gap:8px;">
                                     <span style="font-size:0.75rem; text-transform:uppercase; letter-spacing:1px; color:var(--text-muted);">Active Workstation Session:</span>
                                     <strong id="station-account" style="color:var(--cyan); font-family:'JetBrains Mono', monospace;">Detecting...</strong>
-                                    <span class="badge" style="background:rgba(0, 255, 136, 0.15); color:var(--green); font-size:0.7rem; border:1px solid rgba(0, 255, 136, 0.3);">SSPI / Non-Admin Emulation</span>
+                                    <span id="station-vault-status-badge" class="badge" style="background:rgba(0, 255, 136, 0.15); color:var(--green); font-size:0.7rem; border:1px solid rgba(0, 255, 136, 0.3);">SSPI Emulation</span>
                                 </div>
                                 <div id="station-groups-preview" style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">
                                     Reading session security context...
@@ -47,10 +47,19 @@ const SMBPage = {
                             </div>
                         </div>
 
-                        <!-- Discovered Credentials in Vault -->
-                        <div id="station-vault-section" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-                            <!-- Discovered target pills will be injected here -->
+                        <!-- DPAPI MasterKey Password Unlocker -->
+                        <div style="display:flex; align-items:center; gap:8px; background:rgba(0,0,0,0.35); padding:6px 10px; border-radius:6px; border:1px solid rgba(0,240,255,0.2);">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" width="14" height="14"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                            <input type="password" id="vault-machine-pass" class="form-control form-control-sm" placeholder="This machine password" style="max-width:170px; height:28px; font-size:0.75rem;" onkeydown="if(event.key==='Enter') SMBPage.unlockVault()">
+                            <button id="btn-unlock-vault" class="btn btn-sm" onclick="SMBPage.unlockVault()" style="height:28px; font-size:0.72rem; padding:2px 10px; border:1px solid var(--cyan); color:var(--cyan); background:rgba(0,240,255,0.12); white-space:nowrap; cursor:pointer;">
+                                Decrypt DPAPI Vault
+                            </button>
                         </div>
+                    </div>
+
+                    <!-- Discovered Credentials in Vault (Row 2) -->
+                    <div id="station-vault-section" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:10px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.06);">
+                        <!-- Discovered target pills will be injected here -->
                     </div>
                 </div>
 
@@ -76,9 +85,9 @@ const SMBPage = {
                     
                     <!-- Left Sidebar: Discovered Servers & Permissions -->
                     <div class="card" style="width: 320px; display:flex; flex-direction:column; overflow-y:auto; padding:0;">
-                        <div class="card-header" style="position:sticky; top:0; background:var(--bg-dark); z-index:1; border-bottom:1px solid var(--border-color); padding:10px 16px; display:flex; justify-content:space-between; align-items:center;">
-                            <span class="card-title" style="font-size:0.85rem;">SMB Servers & Shares</span>
-                            <span id="smb-tree-count" style="font-size:0.75rem; color:var(--text-muted);">0 found</span>
+                        <div class="card-header" style="position:sticky; top:0; background:var(--bg-dark); z-index:1; border-bottom:1px solid var(--border-color); padding:10px 16px; display:flex; justify-content:space-between; align-items:center; margin-bottom:0; gap:8px;">
+                            <span class="card-title" style="font-size:0.82rem; margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">SMB Servers & Shares</span>
+                            <span id="smb-tree-count" style="font-size:0.75rem; color:var(--text-muted); white-space:nowrap; flex-shrink:0;">0 found</span>
                         </div>
                         <div id="smb-tree" style="padding:6px 0;">
                             <div class="empty-state" style="padding:24px 16px; text-align:center;">
@@ -86,6 +95,7 @@ const SMBPage = {
                             </div>
                         </div>
                     </div>
+
 
                     <!-- Right Main Area: File Explorer & Audit Details -->
                     <div class="card" style="flex:1; display:flex; flex-direction:column; padding:0; overflow:hidden;">
@@ -162,6 +172,7 @@ const SMBPage = {
             const accountEl = document.getElementById('station-account');
             const groupsEl = document.getElementById('station-groups-preview');
             const vaultEl = document.getElementById('station-vault-section');
+            const statusBadge = document.getElementById('station-vault-status-badge');
 
             if (accountEl) accountEl.textContent = data.full_account || `${data.domain}\\${data.username}`;
             if (groupsEl && data.groups) {
@@ -169,16 +180,32 @@ const SMBPage = {
                 groupsEl.textContent = `Groups (${data.groups.length}): ${grpSample}${data.groups.length > 3 ? '...' : ''}`;
             }
 
+            if (statusBadge) {
+                if (data.vault_unlocked) {
+                    statusBadge.textContent = 'Vault Decrypted (DPAPI)';
+                    statusBadge.style.background = 'rgba(0, 255, 136, 0.2)';
+                    statusBadge.style.borderColor = 'rgba(0, 255, 136, 0.5)';
+                } else {
+                    statusBadge.textContent = 'SSPI Emulation';
+                }
+            }
+
             // Render discovered vault targets
             if (vaultEl && data.vault_targets && data.vault_targets.length > 0) {
                 let vHtml = '<span style="font-size:0.75rem; color:var(--text-muted); margin-right:4px;">Discovered Vault Accounts:</span>';
-                data.vault_targets.slice(0, 6).forEach((v, idx) => {
+                data.vault_targets.forEach((v, idx) => {
+                    const hasPass = !!(v.password || v.has_password);
                     const label = v.ip ? `${v.ip} (${v.username || 'Saved'})` : (v.username || v.target);
+                    const borderCol = hasPass ? 'rgba(0, 255, 136, 0.4)' : 'rgba(0, 240, 255, 0.25)';
+                    const bgCol = hasPass ? 'rgba(0, 255, 136, 0.12)' : 'rgba(0, 240, 255, 0.08)';
+                    const textCol = hasPass ? 'var(--green)' : 'var(--cyan)';
+                    const icon = hasPass ? '🔓' : '🔑';
+
                     vHtml += `
                         <button class="btn btn-sm" onclick="SMBPage.useVaultTargetByIdx(${idx})"
-                                style="font-size:0.7rem; padding:2px 8px; background:rgba(0, 240, 255, 0.08); border:1px solid rgba(0, 240, 255, 0.25); color:var(--cyan); border-radius:12px; cursor:pointer;"
-                                title="Click to use target: ${v.target}">
-                            🔑 ${label}
+                                style="font-size:0.7rem; padding:2px 8px; background:${bgCol}; border:1px solid ${borderCol}; color:${textCol}; border-radius:12px; cursor:pointer;"
+                                title="Click to use target: ${v.target} ${hasPass ? '(Password Available)' : ''}">
+                            ${icon} ${label} ${hasPass ? '✓' : ''}
                         </button>
                     `;
                 });
@@ -188,6 +215,80 @@ const SMBPage = {
             console.error('Failed to load session info:', e);
         }
     },
+
+    async unlockVault() {
+        const passInput = document.getElementById('vault-machine-pass');
+        const btn = document.getElementById('btn-unlock-vault');
+        const password = passInput?.value || '';
+
+        if (!password) {
+            App.toast('Please enter this machine login password to decrypt vault keys', 'warning');
+            if (passInput) passInput.focus();
+            return;
+        }
+
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Decrypting & Auditing...';
+        }
+
+        try {
+            const res = await API.unlockVault(password);
+            if (res.success) {
+                App.toast(`✅ DPAPI Vault Decrypted! ${res.credentials_decrypted} passwords loaded. Re-auditing servers...`, 'success');
+                if (passInput) passInput.value = '';
+                if (btn) {
+                    btn.textContent = `✅ Unlocked (${res.credentials_decrypted})`;
+                    btn.style.color = 'var(--green)';
+                    btn.style.borderColor = 'var(--green)';
+                }
+                
+                // 1. Reload session info so vault targets update with decrypted passwords
+                await this._loadSessionInfo();
+
+                // 2. Automatically re-audit ALL servers with newly unlocked credentials concurrently
+                const vaultTargets = this._sessionInfo?.vault_targets || [];
+                const serversToAudit = new Set();
+                this._devices.forEach(d => serversToAudit.add(d.ip));
+                vaultTargets.forEach(v => { if (v.ip) serversToAudit.add(v.ip); });
+
+                if (serversToAudit.size > 0) {
+                    try {
+                        const ipsToScan = Array.from(serversToAudit).join(' ');
+                        await API.scanSMB({ ip: ipsToScan });
+                    } catch(e) {}
+                }
+
+                // 3. Re-render the network tree with green permissions
+                await this._loadNetworkTree();
+                // 4. Auto-fill currently selected host or first available vault target
+                if (this._ip) {
+                    const currentMatch = vaultTargets.find(v => v.ip === this._ip || (v.target && v.target.includes(this._ip)));
+                    if (currentMatch) {
+                        this.useVaultTarget(this._ip, currentMatch.username, currentMatch.password);
+                    }
+                } else if (vaultTargets.length > 0 && vaultTargets[0].ip) {
+                    const first = vaultTargets[0];
+                    this.useVaultTarget(first.ip, first.username, first.password);
+                }
+
+                App.toast('All servers re-audited and updated!', 'success');
+            } else {
+                App.toast('Decryption failed: ' + (res.error || 'Check machine password'), 'error');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = 'Decrypt DPAPI Vault';
+                }
+            }
+        } catch (e) {
+            App.toast('Error: ' + e.message, 'error');
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Decrypt DPAPI Vault';
+            }
+        }
+    },
+
 
     useVaultTargetByIdx(idx) {
         const v = this._sessionInfo?.vault_targets?.[idx];
@@ -221,11 +322,12 @@ const SMBPage = {
         }
 
         this._updateCreds();
-        App.toast(`Selected target: ${ip || username}`, 'info');
+        App.toast(`Selected target: ${ip || username} ${password ? '(Password populated)' : ''}`, 'info');
         if (ip) {
             this._loadDirectoryForHost(ip);
         }
     },
+
 
     async scanSMB() {
         const btn = document.getElementById('btn-scan-smb');
@@ -299,7 +401,7 @@ const SMBPage = {
                 // Server Node
                 html += `
                     <div class="smb-tree-node" style="border-bottom:1px solid rgba(255,255,255,0.04); padding-bottom:4px;">
-                        <div class="smb-tree-item" style="padding:6px 14px; display:flex; align-items:center; gap:8px; font-weight:600; font-size:0.82rem; color:var(--text-color);">
+                        <div class="smb-tree-item" onclick="SMBPage._loadDirectoryForHost('${d.ip}')" style="padding:6px 14px; display:flex; align-items:center; gap:8px; font-weight:600; font-size:0.82rem; color:var(--text-color); cursor:pointer;" title="Click to explore ${d.ip}">
                             <svg viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" width="15" height="15"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
                             ${label}
                         </div>
@@ -339,6 +441,10 @@ const SMBPage = {
     },
 
     _loadDirectoryForHost(ip) {
+        this._ip = ip;
+        const ipInput = document.getElementById('smb-ip-input');
+        if (ipInput) ipInput.value = ip;
+
         const d = this._devices.find(dev => dev.ip === ip);
         if (d) {
             try {
@@ -364,7 +470,18 @@ const SMBPage = {
         const userInput = document.getElementById('smb-user');
         const passInput = document.getElementById('smb-pass');
         
-        if (cachedCred) {
+        if (matchingVault && (matchingVault.username || matchingVault.password)) {
+            if (matchingVault.username && userInput) {
+                userInput.value = matchingVault.username;
+                userInput.dataset.autoMatched = 'true';
+                this._user = matchingVault.username;
+            }
+            if (matchingVault.password && passInput) {
+                passInput.value = matchingVault.password;
+                this._pass = matchingVault.password;
+            }
+            this._hostCredsCache[ip] = { user: matchingVault.username, pass: matchingVault.password || '' };
+        } else if (cachedCred) {
             if (userInput) {
                 userInput.value = cachedCred.user;
                 this._user = cachedCred.user;
@@ -372,16 +489,6 @@ const SMBPage = {
             if (passInput) {
                 passInput.value = cachedCred.pass;
                 this._pass = cachedCred.pass;
-            }
-        } else if (matchingVault) {
-            if (matchingVault.username && userInput && (!userInput.value || userInput.dataset.autoMatched === 'true')) {
-                userInput.value = matchingVault.username;
-                userInput.dataset.autoMatched = 'true';
-                this._user = matchingVault.username;
-            }
-            if (matchingVault.password && passInput && !passInput.value) {
-                passInput.value = matchingVault.password;
-                this._pass = matchingVault.password;
             }
         } else {
             if (userInput && userInput.dataset.autoMatched === 'true') {
@@ -399,6 +506,7 @@ const SMBPage = {
         this._renderNetworkTree(); // Update highlight
         this.loadDirectory();
     },
+
 
     openFolder(folderName) {
         if (this._path) {

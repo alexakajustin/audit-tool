@@ -269,7 +269,22 @@ def smb_listdir():
     if not ip or not share:
         return jsonify({"error": "IP and Share are required"}), 400
 
-    # Smart credential resolution: if no username provided, check Windows Credential Manager
+    # Smart credential resolution: check unlocked DPAPI vault and Windows Credential Manager
+    from core.dpapi_vault import get_unlocked_cache
+    unlocked_cache = get_unlocked_cache()
+    cached_match = unlocked_cache.get(ip)
+    if not cached_match:
+        for k, v in unlocked_cache.items():
+            if ip in k:
+                cached_match = v
+                break
+
+    if cached_match:
+        if not username and cached_match.get("username"):
+            username = cached_match["username"]
+        if not password and cached_match.get("password"):
+            password = cached_match["password"]
+
     if not username:
         try:
             import win32cred
@@ -281,6 +296,9 @@ def smb_listdir():
                     break
         except Exception:
             pass
+
+    if username and "\\" not in username and "@" not in username:
+        username = f"{ip}\\{username}"
 
     import smbclient
     try:
@@ -423,6 +441,9 @@ def smb_session_info():
     # Query Windows Credential Manager for saved targets (unprivileged)
     try:
         import win32cred
+        from core.dpapi_vault import get_unlocked_cache
+        unlocked_cache = get_unlocked_cache()
+
         creds = win32cred.CredEnumerate(None, 0) or []
         vault_items = []
         for c in creds:
@@ -447,10 +468,18 @@ def smb_session_info():
                         pass
             except Exception:
                 pass
-            
+
             # Extract IP if present in target
             ip_match = re.search(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', target)
             ip = ip_match.group(0) if ip_match else ""
+
+            # Check if decrypted via DPAPI unlock
+            if not password:
+                cached = unlocked_cache.get(target) or (unlocked_cache.get(ip) if ip else None)
+                if cached and cached.get("password"):
+                    password = cached["password"]
+                    if not user and cached.get("username"):
+                        user = cached["username"]
             
             type_label = "Domain Password" if ctype == 2 else "Generic"
             if user or ip:
@@ -462,9 +491,36 @@ def smb_session_info():
                     "has_password": bool(password),
                     "type": type_label,
                 })
+
+        # Also append any DPAPI decrypted targets that might not be in generic enum
+        for key, cached_item in unlocked_cache.items():
+            if not any(v.get("target") == cached_item.get("target") for v in vault_items):
+                vault_items.append(cached_item)
+
         info["vault_targets"] = vault_items
+        info["vault_unlocked"] = bool(unlocked_cache)
     except Exception as e:
         info["vault_error"] = str(e)
 
     return jsonify(info)
+
+
+@discovery_bp.route("/api/discovery/unlock-vault", methods=["POST"])
+def unlock_vault():
+    """
+    Decrypts Windows DPAPI Credential Vault using the user/machine login password.
+    Extracts all stored Domain & SMB target passwords for seamless audit exploration.
+    """
+
+    data = request.get_json(silent=True) or {}
+    password = data.get("password", "").strip()
+
+    if not password:
+        return jsonify({"success": False, "error": "Machine password is required"}), 400
+
+    from core.dpapi_vault import unlock_vault_with_password
+    res = unlock_vault_with_password(password)
+
+    return jsonify(res)
+
 

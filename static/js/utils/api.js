@@ -58,6 +58,7 @@ const API = {
     scanSMB(config)     { return this.post('/api/discovery/scan_smb', config); },
     listSMBDirectory(config) { return this.post('/api/discovery/smb_listdir', config); },
     getSMBSessionInfo() { return this.get('/api/discovery/smb_session_info'); },
+    unlockVault(password) { return this.post('/api/discovery/unlock-vault', { password }); },
 
     // ── Passive Discovery ─────────────────────────────────
     getPassiveDiscoveryStatus() { return this.get('/api/passive-discovery/status'); },

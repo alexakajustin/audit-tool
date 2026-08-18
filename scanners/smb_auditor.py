@@ -60,7 +60,7 @@ class SMBAuditor(BaseScanner):
         """Available on Windows where win32net is present."""
         return True
 
-    def _is_smb_port_open(self, ip: str, timeout: float = 0.35) -> bool:
+    def _is_smb_port_open(self, ip: str, timeout: float = 2.5) -> bool:
         """Fast TCP probe to verify if port 445 is actively listening."""
         import socket
         try:
@@ -120,7 +120,7 @@ class SMBAuditor(BaseScanner):
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             future_to_ip = {executor.submit(audit_worker, ip): ip for ip in active_smb_ips}
-            done, not_done = concurrent.futures.wait(future_to_ip.keys(), timeout=4.0)
+            done, not_done = concurrent.futures.wait(future_to_ip.keys(), timeout=30.0)
             
             for future in done:
                 try:
@@ -182,17 +182,33 @@ class SMBAuditor(BaseScanner):
         if not shares:
             return None
         
-        # 2. Register SMB Session if credentials provided
-        active_identity = username if username else f"{os.environ.get('USERDOMAIN', '')}\\{os.environ.get('USERNAME', '')} (Active Station Session)"
+        # 2. Register SMB Session if credentials provided or cached via DPAPI unlock
+        from core.dpapi_vault import get_unlocked_cache
+        unlocked_cache = get_unlocked_cache()
+        cached_match = unlocked_cache.get(ip)
+        if not cached_match:
+            for k, v in unlocked_cache.items():
+                if ip in k:
+                    cached_match = v
+                    break
+
+        target_user = username or (cached_match.get("username") if cached_match else "")
+        target_pass = password or (cached_match.get("password") if cached_match else "")
+
+        if target_user and "\\" not in target_user and "@" not in target_user:
+            target_user = f"{ip}\\{target_user}"
+
+        active_identity = target_user if target_user else f"{os.environ.get('USERDOMAIN', '')}\\{os.environ.get('USERNAME', '')} (Active Station Session)"
         try:
-            if username and password:
-                smbclient.register_session(ip, username=username, password=password)
-            elif username:
-                smbclient.register_session(ip, username=username)
+            if target_user and target_pass:
+                smbclient.register_session(ip, username=target_user, password=target_pass)
+            elif target_user:
+                smbclient.register_session(ip, username=target_user)
             else:
                 smbclient.register_session(ip)
         except Exception:
             pass
+
 
         accessible_shares = []
         
@@ -273,10 +289,9 @@ class SMBAuditor(BaseScanner):
                     found.append(f"[FILE] {entry.name}")
             return found
         except Exception as os_err:
-            # If native OS failed with non-existent share, don't fallback to smbclient
-            err_msg = str(os_err)
-            if "WinError 67" in err_msg or "network name cannot be found" in err_msg:
-                raise
+            # Native OS failed (e.g. Access Denied or WinError 67 for hidden shares without auth).
+            # We will now fallback to smbclient.
+            pass
 
         # Method 2: smbclient fallback
         try:
