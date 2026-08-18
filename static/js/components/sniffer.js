@@ -465,11 +465,25 @@ const SnifferPage = {
             App.toast(`⚡ Intercepting ALL ${data.target_count} devices (${total} found) — full network visibility active`, 'success');
             this._showMitmRunning(true);
 
-            // Also start capture if not already running
+            // Handle the UI state for the auto-started sniffer
             const stats = await API.getSnifferStats();
             if (stats.is_running) {
                 this._showRunning(true);
                 this._startPolling();
+            } else {
+                try {
+                    await API.startSniffer({ interface: iface });
+                    this._showRunning(true);
+                    this._startPolling();
+                } catch (startErr) {
+                    if (startErr.status === 409 || (startErr.message && startErr.message.includes('already running'))) {
+                        // It was already running, just sync UI
+                        this._showRunning(true);
+                        this._startPolling();
+                    } else {
+                        App.toast('Could not auto-start sniffer: ' + startErr.message, 'warning');
+                    }
+                }
             }
 
         } catch (e) {

@@ -181,9 +181,12 @@ class ArpSpoofer:
 
             # If gateway not in scan results, ARP it directly
             if self._gateway_ip and not self._gateway_mac:
+                import ipaddress
                 try:
+                    # Validate gateway IP is actually a valid IP address string before trying to ARP it
+                    ipaddress.IPv4Address(self._gateway_ip)
                     arp_gw = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=self._gateway_ip)
-                    ans, _ = srp(arp_gw, iface=interface, timeout=2, retry=1)
+                    ans, _ = srp(arp_gw, iface=interface, timeout=2, retry=1, verbose=False)
                     if ans:
                         self._gateway_mac = ans[0][1].hwsrc.upper()
                         # Add gateway to list if not present
@@ -194,8 +197,8 @@ class ArpSpoofer:
                                 "hostname": "Gateway/Router",
                                 "is_gateway": True,
                             })
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[MITM] Warning: Failed to ARP gateway IP {self._gateway_ip}: {e}")
 
             # Sort: gateway first, then by IP
             hosts.sort(key=lambda h: (not h.get("is_gateway", False), h["ip"]))
@@ -275,6 +278,10 @@ class ArpSpoofer:
 
         if not self._gateway_ip:
             return {"error": "Could not detect gateway IP"}
+            
+        if not self._gateway_mac and self._gateway_ip:
+            self._gateway_mac = self._resolve_mac(self._gateway_ip)
+            
         if not self._gateway_mac:
             return {"error": "Could not resolve gateway MAC. Run 'Scan Network' first."}
         if not self._local_mac:
@@ -604,9 +611,26 @@ class ArpSpoofer:
         """Detect the default gateway IP."""
         try:
             if platform.system() == "Windows":
+                # Find the route associated with our local IP's interface
+                if self._local_ip:
+                    cmd = f"""
+                    $ifIndex = (Get-NetIPAddress -IPAddress '{self._local_ip}' -ErrorAction SilentlyContinue).InterfaceIndex;
+                    if ($ifIndex) {{
+                        (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -InterfaceIndex $ifIndex -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1).NextHop
+                    }}
+                    """
+                    result = subprocess.run(
+                        ["powershell", "-Command", cmd],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    gw = result.stdout.strip()
+                    if gw and gw != "0.0.0.0" and gw != "25.255.255.254":
+                        return gw
+
+                # Fallback if specific local IP matching fails
                 result = subprocess.run(
                     ["powershell", "-Command",
-                     "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Select-Object -First 1).NextHop"],
+                     "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Where-Object NextHop -ne '25.255.255.254' | Sort-Object RouteMetric | Select-Object -First 1).NextHop"],
                     capture_output=True, text=True, timeout=10,
                 )
                 gw = result.stdout.strip()
@@ -625,8 +649,9 @@ class ArpSpoofer:
                     for part in parts:
                         try:
                             ip = ipaddress.IPv4Address(part)
-                            if str(ip) != "0.0.0.0" and str(ip) != "255.255.255.255":
-                                return str(ip)
+                            ip_str = str(ip)
+                            if ip_str != "0.0.0.0" and ip_str != "255.255.255.255" and ip_str != "25.255.255.254":
+                                return ip_str
                         except Exception:
                             continue
 

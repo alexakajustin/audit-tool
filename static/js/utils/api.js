@@ -21,7 +21,9 @@ const API = {
             const data = await response.json();
 
             if (!response.ok) {
-                throw new Error(data.error || `HTTP ${response.status}`);
+                const err = new Error(data.error || `HTTP ${response.status}`);
+                err.status = response.status;
+                throw err;
             }
 
             return data;
