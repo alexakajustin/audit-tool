@@ -16,6 +16,7 @@ const SnifferPage = {
     _trafficSort: { col: 'data_volume', dir: 'desc' },
     _trafficData: [],
     _expandedIps: new Set(),
+    _lastMitmTargetCount: 0,
 
     title: 'Sniffer',
     subtitle: 'Passive network traffic capture & intelligence',
@@ -465,6 +466,9 @@ const SnifferPage = {
             App.toast(`⚡ Intercepting ALL ${data.target_count} devices (${total} found) — full network visibility active`, 'success');
             this._showMitmRunning(true);
 
+            // Render intercepted targets in the Active Interception panel
+            await this._fetchAndRenderMitmTargets();
+
             // Handle the UI state for the auto-started sniffer
             const stats = await API.getSnifferStats();
             if (stats.is_running) {
@@ -500,6 +504,13 @@ const SnifferPage = {
 
             App.toast('Interception stopped — ARP tables restored', 'info');
             this._showMitmRunning(false);
+            this._lastMitmTargetCount = 0;
+
+            // Clear the targets container
+            const container = document.getElementById('mitm-targets');
+            if (container) {
+                container.innerHTML = '<span style="color:var(--text-muted);font-size:0.78rem">Click "Scan Network" to discover devices on your subnet for interception.</span>';
+            }
 
         } catch (e) {
             App.toast('Failed to stop MITM: ' + e.message, 'error');
@@ -535,8 +546,103 @@ const SnifferPage = {
                 this._showMitmRunning(true);
                 const pktEl = document.getElementById('mitm-pkt-count');
                 if (pktEl) pktEl.textContent = `${data.packets_sent} ARP pkts sent`;
+
+                // Re-render targets when count changes (handles auto-refresh adding new devices)
+                const targetCount = (data.targets || []).length;
+                if (targetCount !== this._lastMitmTargetCount) {
+                    this._lastMitmTargetCount = targetCount;
+                    this._renderMitmTargets(data);
+                }
+            } else {
+                // MITM stopped externally
+                if (this._lastMitmTargetCount > 0) {
+                    this._showMitmRunning(false);
+                    this._lastMitmTargetCount = 0;
+                    const container = document.getElementById('mitm-targets');
+                    if (container) {
+                        container.innerHTML = '<span style="color:var(--text-muted);font-size:0.78rem">Click "Scan Network" to discover devices on your subnet for interception.</span>';
+                    }
+                }
             }
         } catch (e) { /* ignore */ }
+    },
+
+    async _fetchAndRenderMitmTargets() {
+        /* Fetch MITM status and render the intercepted devices panel. */
+        try {
+            const resp = await fetch('/api/mitm/status');
+            const data = await resp.json();
+            if (data.is_running) {
+                this._renderMitmTargets(data);
+                this._lastMitmTargetCount = (data.targets || []).length;
+            }
+        } catch (e) { /* ignore */ }
+    },
+
+    _renderMitmTargets(statusData) {
+        /* Render the Active Interception targets panel from MITM status data. */
+        const container = document.getElementById('mitm-targets');
+        if (!container) return;
+
+        const targets = statusData.targets || [];
+        const discoveredHosts = statusData.discovered_hosts || [];
+
+        if (targets.length === 0 && discoveredHosts.length === 0) {
+            container.innerHTML = '<span style="color:var(--text-muted);font-size:0.78rem">No devices being intercepted.</span>';
+            return;
+        }
+
+        // Build a lookup of intercepted IPs
+        const interceptedIps = new Set(targets.map(t => t.ip));
+
+        // Merge discovered hosts with active targets for full view
+        const allHosts = new Map();
+        for (const h of discoveredHosts) {
+            allHosts.set(h.ip, h);
+        }
+        // Ensure all active targets appear even if not in discovered_hosts
+        for (const t of targets) {
+            if (!allHosts.has(t.ip)) {
+                allHosts.set(t.ip, { ip: t.ip, mac: t.mac, hostname: '', is_gateway: false });
+            }
+        }
+
+        const sorted = Array.from(allHosts.values()).sort((a, b) => {
+            // Gateway first, then intercepted, then passive
+            if (a.is_gateway !== b.is_gateway) return a.is_gateway ? -1 : 1;
+            const aInt = interceptedIps.has(a.ip);
+            const bInt = interceptedIps.has(b.ip);
+            if (aInt !== bInt) return aInt ? -1 : 1;
+            return a.ip.localeCompare(b.ip);
+        });
+
+        container.innerHTML = sorted.map(h => {
+            const isGw = h.is_gateway;
+            const isIntercepted = interceptedIps.has(h.ip);
+            const color = isGw ? 'var(--orange)' : isIntercepted ? 'var(--red)' : 'var(--cyan)';
+            const bgColor = isGw ? 'var(--bg-deep)' : isIntercepted ? 'rgba(255,59,92,0.08)' : 'var(--bg-deep)';
+            const borderColor = isGw ? 'var(--border)' : isIntercepted ? 'rgba(255,59,92,0.3)' : 'var(--border)';
+            const tag = isGw
+                ? ' <span style="color:var(--orange);font-size:0.6rem;font-weight:600">GATEWAY</span>'
+                : isIntercepted
+                    ? ' <span style="color:var(--red);font-size:0.6rem;font-weight:600">⚡ INTERCEPTED</span>'
+                    : '';
+            return `
+                <div style="display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;background:${bgColor};border:1px solid ${borderColor};font-size:0.75rem;white-space:nowrap;${isGw ? 'opacity:0.4' : ''}">
+                    <span style="color:${color};font-family:var(--font-mono)">${h.ip}</span>
+                    <span style="color:var(--text-muted);font-size:0.65rem">${h.mac || ''}</span>
+                    ${h.hostname ? `<span style="color:var(--green);font-size:0.65rem">${h.hostname}</span>` : ''}
+                    ${tag}
+                </div>
+            `;
+        }).join('');
+
+        // Update status text with target count
+        const text = document.getElementById('mitm-status-text');
+        if (text && statusData.is_running) {
+            text.textContent = `ACTIVE — Intercepting ${targets.length} device${targets.length !== 1 ? 's' : ''}`;
+            text.style.color = 'var(--red)';
+        }
     },
 
     async _pollTrafficTable() {

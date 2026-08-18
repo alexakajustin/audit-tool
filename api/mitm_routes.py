@@ -10,10 +10,13 @@ mitm_bp = Blueprint("mitm", __name__)
 
 @mitm_bp.route("/api/mitm/status", methods=["GET"])
 def mitm_status():
-    """Get current MITM status, targets, and stats."""
+    """Get current MITM status, targets, discovered hosts, and stats."""
     if not api.arp_spoofer:
         return jsonify({"error": "ARP Spoofer not available"}), 503
-    return jsonify(api.arp_spoofer.get_status())
+    status = api.arp_spoofer.get_status()
+    # Add flat target_ips list for easy frontend consumption
+    status["target_ips"] = [t["ip"] for t in status.get("targets", [])]
+    return jsonify(status)
 
 
 @mitm_bp.route("/api/mitm/scan", methods=["POST"])
