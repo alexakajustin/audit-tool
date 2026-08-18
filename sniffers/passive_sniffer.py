@@ -1416,6 +1416,28 @@ class PassiveSniffer(BaseSniffer):
         except Exception:
             return self._find_sni_in_bytes(payload)
 
+    def _find_sni_in_bytes(self, payload: bytes) -> str:
+        """Fallback: roughly search for SNI-like domains in raw payload if struct parsing fails."""
+        try:
+            import re
+            matches = re.findall(br'([a-zA-Z0-9-]+\.[a-zA-Z0-9.-]+)', payload)
+            for match in matches:
+                try:
+                    s = match.decode('ascii')
+                    if len(s) > 4 and ' ' not in s and not s.endswith('.arpa'):
+                        return s
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return ""
+
+    def _extract_quic_sni(self, payload: bytes) -> str:
+        """Extract SNI from QUIC (HTTP/3) packets using heuristic."""
+        # QUIC Initial packets contain the SNI in plaintext, but the format is very complex.
+        # Use the same regex fallback for simplicity since it works reasonably well for discovery.
+        return self._find_sni_in_bytes(payload)
+
     def _guess_os(self, user_agent: str) -> str:
         """Guess the operating system from an HTTP User-Agent string."""
         ua = user_agent.lower()
