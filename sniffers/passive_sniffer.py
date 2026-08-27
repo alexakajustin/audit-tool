@@ -142,12 +142,23 @@ class PassiveSniffer(BaseSniffer):
         # Detect local IP for this interface
         self._local_ip = self._detect_local_ip(interface)
 
+        # ── KERNEL-LEVEL BPF FILTERING FOR ULTRA-PERFORMANCE ──
+        # We only need metadata (DNS, HTTP Host, TLS SNI, DHCP, mDNS, NetBIOS).
+        # We aggressively drop bulk data traffic (video streams, downloads) at the OS level
+        # so it never reaches Python/Scapy, eliminating the CPU bottleneck.
         port = getattr(Config, "PORT", 5000)
+        
+        # Capture: DNS(53), HTTP(80), HTTPS(443), DHCP(67,68), mDNS(5353), LLMNR(5355), NetBIOS(137,138,139), SSDP(1900)
+        metadata_ports = "port 53 or port 80 or port 443 or port 67 or port 68 or port 5353 or port 5355 or port 137 or port 138 or port 139 or port 1900"
+        
         exclude_rule = f"not port {port}"
+        
         if bpf_filter:
-            effective_filter = f"({bpf_filter}) and {exclude_rule}"
+            effective_filter = f"({bpf_filter}) and ({metadata_ports}) and {exclude_rule}"
         else:
-            effective_filter = exclude_rule
+            effective_filter = f"({metadata_ports}) and {exclude_rule}"
+
+        print(f"[Sniffer] Applied strict BPF metadata filter: {effective_filter}")
 
         self._thread = threading.Thread(
             target=self._capture_loop,

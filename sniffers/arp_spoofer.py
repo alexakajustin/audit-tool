@@ -356,13 +356,16 @@ class ArpSpoofer:
         return result
 
     def _get_spoof_interval(self, target_count: int) -> float:
-        """Adaptive ARP send interval based on target count to prevent Wi-Fi congestion."""
+        """Adaptive ARP send interval based on target count to prevent Wi-Fi congestion.
+        Devices typically hold ARP cache for 30-60 seconds. We can relax the interval
+        to drastically reduce broadcast noise on half-duplex Wi-Fi.
+        """
         if target_count <= 5:
-            return 2.0
+            return 10.0
         elif target_count <= 15:
-            return 4.0
+            return 12.0
         else:
-            return 6.0
+            return 15.0
 
     def _spoof_loop(self) -> None:
         """Background thread: continuously send spoofed ARP replies."""
