@@ -182,7 +182,20 @@ class PassiveSniffer(BaseSniffer):
         with self._lock:
             # Top DNS queries (most popular domains being browsed, excluding .arpa reverse DNS)
             dns_filtered = [(k, v) for k, v in self._dns_queries.items() if not k.endswith(".arpa")]
-            dns_top = sorted(dns_filtered, key=lambda x: x[1], reverse=True)[:50]
+            dns_top_raw = sorted(dns_filtered, key=lambda x: x[1], reverse=True)[:50]
+            
+            dns_top = []
+            for domain, count in dns_top_raw:
+                queriers = []
+                for ip, domains in self._device_dns.items():
+                    if domain in domains:
+                        queriers.append(ip)
+                for ip, domains in self._device_sni.items():
+                    if domain in domains and ip not in queriers:
+                        queriers.append(ip)
+                
+                queriers_info = [{"ip": ip, "hostname": self._device_hostnames.get(ip, "")} for ip in queriers]
+                dns_top.append((domain, count, queriers_info))
 
             # Security alerts (last 20)
             alerts = self._security_alerts[-20:]

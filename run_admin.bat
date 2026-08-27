@@ -12,8 +12,8 @@ if %errorLevel% == 0 (
     python app.py
 ) else (
     echo Requesting Administrator elevation...
-    :: Elevate and ensure directory is set to this script's path
-    powershell -Command "Start-Process cmd -ArgumentList '/c \"cd /d %~dp0 && %~dpnx0\"' -Verb RunAs"
+    :: Elevate and re-run the script to trigger UAC
+    powershell -Command "Start-Process -FilePath '%~dpnx0' -Verb RunAs"
     exit /b
 )
 

@@ -1043,12 +1043,24 @@ const SnifferPage = {
                 .filter(([domain]) => !domain.endsWith('.arpa'))
                 .sort((a, b) => b[1] - a[1]);
             if (sorted.length > 0) {
-                dnsEl.innerHTML = sorted.slice(0, 25).map(([domain, count]) => `
-                    <div class="intel-row intel-row-dns">
-                        <span class="intel-dns-domain">${this._escapeHtml(domain)}</span>
+                dnsEl.innerHTML = sorted.slice(0, 25).map(([domain, count, queriers]) => {
+                    let querierHtml = '';
+                    if (queriers && queriers.length > 0) {
+                        const topQuerier = queriers[0];
+                        const name = topQuerier.hostname ? topQuerier.hostname : topQuerier.ip;
+                        const extra = queriers.length > 1 ? ` <span style="color:var(--text-muted)">+${queriers.length - 1}</span>` : '';
+                        querierHtml = `<span style="color:var(--cyan);font-size:0.65rem;font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${this._escapeHtml(name)}${extra}</span>`;
+                    }
+                    return `
+                    <div class="intel-row intel-row-dns" style="align-items:center">
+                        <div style="display:flex;flex-direction:column;flex:1;min-width:0;line-height:1.2">
+                            <span class="intel-dns-domain" style="overflow:hidden;text-overflow:ellipsis">${this._escapeHtml(domain)}</span>
+                            ${querierHtml}
+                        </div>
                         <span class="intel-dns-count">${count}×</span>
                     </div>
-                `).join('');
+                    `;
+                }).join('');
             }
         }
 
