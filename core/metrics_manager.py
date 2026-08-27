@@ -385,7 +385,7 @@ class MetricsManager:
                 row.cell("Request Count")
                 
                 pdf.set_font("helvetica", "", 9)
-                for domain, count in dns_queries[:10]:
+                for domain, count, *_ in dns_queries[:10]:
                     row = table.row()
                     row.cell(str(domain))
                     row.cell(f"{count} queries")
