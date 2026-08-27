@@ -1,6 +1,6 @@
 """
 Data models for the audit tool.
-Pure data classes — no behavior, no dependencies, serializable.
+Pure data classes - no behavior, no dependencies, serializable.
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ class PortInfo:
 class Device:
     """
     A discovered network device.
-    Single source of truth for device identity — keyed by MAC address.
+    Single source of truth for device identity - keyed by MAC address.
     """
     mac: str                                    # Primary key
     ip: str = ""
@@ -110,7 +110,7 @@ class Device:
         if other.response_time_ms is not None:
             self.response_time_ms = other.response_time_ms
 
-        # Merge ports — keep unique by (port, protocol)
+        # Merge ports - keep unique by (port, protocol)
         existing = {(p.port, p.protocol) for p in self.ports}
         for port in other.ports:
             if (port.port, port.protocol) not in existing:
@@ -146,7 +146,7 @@ class ScanTarget:
 
 @dataclass
 class ScanCapabilities:
-    """What a scanner can detect — used by registry for capability queries."""
+    """What a scanner can detect - used by registry for capability queries."""
     can_discover_hosts: bool = False
     can_detect_ports: bool = False
     can_detect_os: bool = False
@@ -199,7 +199,7 @@ class ScanResult:
 
 @dataclass
 class PacketInfo:
-    """A single captured packet — lightweight summary for streaming."""
+    """A single captured packet - lightweight summary for streaming."""
     timestamp: float
     protocol: str               # ARP, DNS, HTTP, TCP, UDP, ICMP, etc.
     src: str                    # Source IP or MAC

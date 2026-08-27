@@ -1,5 +1,5 @@
 """
-SMB Share Auditor — Discovers and enumerates SMB shares, testing for read access.
+SMB Share Auditor - Discovers and enumerates SMB shares, testing for read access.
 """
 
 from __future__ import annotations

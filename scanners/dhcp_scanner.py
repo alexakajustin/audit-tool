@@ -1,5 +1,5 @@
 """
-DHCP Scanner — passive DHCP traffic sniffer.
+DHCP Scanner - passive DHCP traffic sniffer.
 
 Captures DHCP Discover/Offer/Request/ACK packets to map
 device assignments. Only useful on networks with DHCP;

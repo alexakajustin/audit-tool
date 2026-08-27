@@ -1,5 +1,5 @@
 """
-Passive Discovery Engine — mines broadcast/multicast traffic to discover
+Passive Discovery Engine - mines broadcast/multicast traffic to discover
 ALL devices on the LAN without sending a single packet.
 
 On a switched network, unicast traffic between other devices never reaches
@@ -7,7 +7,7 @@ your port. But EVERY device constantly leaks its identity through broadcast
 protocols: ARP, DHCP, mDNS, SSDP, LLMNR, NetBIOS.
 
 This engine captures that broadcast traffic and automatically builds
-the device inventory — no active scanning required.
+the device inventory - no active scanning required.
 """
 
 from __future__ import annotations
@@ -88,7 +88,7 @@ class PassiveDiscovery:
             return list(self._devices.values())
 
     def _discovery_loop(self, interface: str) -> None:
-        """Background thread — captures broadcast/multicast traffic."""
+        """Background thread - captures broadcast/multicast traffic."""
         try:
             from scapy.all import sniff, conf
 
@@ -349,7 +349,7 @@ class PassiveDiscovery:
             try:
                 raw = bytes(pkt[IP].payload.payload) if pkt.haslayer(IP) else b""
                 if len(raw) > 56:
-                    # NetBIOS name service query — name starts at offset 13
+                    # NetBIOS name service query - name starts at offset 13
                     # Encoded as pairs of chars (A=0x41+nibble)
                     encoded = raw[13:45]
                     decoded = ""

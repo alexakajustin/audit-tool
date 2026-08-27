@@ -1,5 +1,5 @@
 """
-Inventory Manager — persists and manages discovered devices in SQLite.
+Inventory Manager - persists and manages discovered devices in SQLite.
 
 Single Responsibility: CRUD + merge for the device inventory.
 YAGNI: raw sqlite3, no ORM. Simple queries, simple schema.

@@ -1,5 +1,5 @@
 /**
- * WebSocket Client — manages Socket.IO connections for real-time updates.
+ * WebSocket Client - manages Socket.IO connections for real-time updates.
  */
 const WS = {
     _socket: null,

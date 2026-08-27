@@ -1,5 +1,5 @@
 """
-Passive Discovery API routes — start/stop/status for the background
+Passive Discovery API routes - start/stop/status for the background
 broadcast traffic discovery engine.
 """
 
@@ -23,7 +23,7 @@ def start_passive_discovery():
     Start passive discovery.
 
     Body JSON:
-        interface: str (optional) — network interface
+        interface: str (optional) - network interface
     """
     if api.passive_discovery.is_running:
         return jsonify({"error": "Passive discovery is already running"}), 409

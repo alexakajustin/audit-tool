@@ -1,5 +1,5 @@
 /**
- * Dashboard Component — network overview with live statistics.
+ * Dashboard Component - network overview with live statistics.
  */
 const DashboardPage = {
     _refreshInterval: null,
@@ -12,10 +12,10 @@ const DashboardPage = {
             <div class="fade-in">
                 <!-- Stats Cards -->
                 <div class="stats-grid" id="dashboard-stats">
-                    ${this._renderStatCard('Total Devices', '—', 'cyan', 'devices')}
-                    ${this._renderStatCard('Online', '—', 'green', 'online')}
-                    ${this._renderStatCard('Open Ports', '—', 'orange', 'ports')}
-                    ${this._renderStatCard('Sniffer', '—', 'red', 'sniffer')}
+                    ${this._renderStatCard('Total Devices', '-', 'cyan', 'devices')}
+                    ${this._renderStatCard('Online', '-', 'green', 'online')}
+                    ${this._renderStatCard('Open Ports', '-', 'orange', 'ports')}
+                    ${this._renderStatCard('Sniffer', '-', 'red', 'sniffer')}
                 </div>
 
                 <!-- Network Topology Map -->
@@ -168,7 +168,7 @@ const DashboardPage = {
                 App.toast('Metrics gathering stopped. Report generated.', 'success');
             } else {
                 await API.startMetrics();
-                App.toast('Metrics gathering started in background...', 'success');
+                App.toast('Metrics gathering & interception started...', 'success');
             }
             await this._loadData();
         } catch (e) {
@@ -305,12 +305,12 @@ const DashboardPage = {
             if (!this._network) {
                 this._nodesDataSet = new vis.DataSet(data.nodes);
                 this._edgesDataSet = new vis.DataSet(data.edges);
-                
+
                 const graphData = {
                     nodes: this._nodesDataSet,
                     edges: this._edgesDataSet
                 };
-                
+
                 this._network = new vis.Network(container, graphData, options);
             } else {
                 // Seamlessly update data without resetting the view or physics
@@ -368,7 +368,7 @@ const DashboardPage = {
             const statusText = document.getElementById('metrics-status-text');
             const btnToggle = document.getElementById('btn-metrics-toggle');
             const btnDownload = document.getElementById('btn-metrics-download');
-            
+
             const pVal = document.getElementById('metrics-packets');
             const hVal = document.getElementById('metrics-hosts');
             const aVal = document.getElementById('metrics-alerts');
@@ -433,7 +433,7 @@ const DashboardPage = {
             <div class="proto-bar-row">
                 <span class="proto-bar-label">${this._truncate(vendor, 14)}</span>
                 <div class="proto-bar-track">
-                    <div class="proto-bar-fill" style="width:${(count/maxCount)*100}%;background:${colors[i % colors.length]}"></div>
+                    <div class="proto-bar-fill" style="width:${(count / maxCount) * 100}%;background:${colors[i % colors.length]}"></div>
                 </div>
                 <span class="proto-bar-count">${count}</span>
             </div>
@@ -455,12 +455,12 @@ const DashboardPage = {
                     ${devices.map(d => `
                         <div style="display:flex;align-items:center;gap:12px;padding:8px 12px;border-radius:var(--radius-sm);background:var(--bg-deep)">
                             <span class="badge badge-${d.status}">${d.status}</span>
-                            <span class="mono" style="color:var(--cyan);min-width:110px">${d.ip || '—'}</span>
+                            <span class="mono" style="color:var(--cyan);min-width:110px">${d.ip || '-'}</span>
                             <span class="mono" style="min-width:130px;color:var(--text-muted)">${d.mac}</span>
                             <span style="flex:1;color:var(--text-secondary)">${d.vendor || 'Unknown'}</span>
                             <span style="color:var(--text-muted);font-size:0.75rem">${d.discovery_methods.map(m =>
-                                `<span class="badge badge-scanner" style="margin:1px;font-size:0.6rem">${m}</span>`
-                            ).join('')}</span>
+                `<span class="badge badge-scanner" style="margin:1px;font-size:0.6rem">${m}</span>`
+            ).join('')}</span>
                             <span style="color:var(--text-muted);font-size:0.75rem">${this._timeAgo(d.last_seen)}</span>
                         </div>
                     `).join('')}

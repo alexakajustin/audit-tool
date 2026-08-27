@@ -1,5 +1,5 @@
 """
-API package — thin Flask adapter layer.
+API package - thin Flask adapter layer.
 Registers all blueprints and provides access to shared services.
 """
 
@@ -15,7 +15,7 @@ from sniffers.vlan_discovery import VLANDiscovery
 from sniffers.arp_spoofer import ArpSpoofer
 
 
-# Shared service instances — initialized in app.py, used by routes
+# Shared service instances - initialized in app.py, used by routes
 registry: ScannerRegistry = None  # type: ignore
 orchestrator: ScanOrchestrator = None  # type: ignore
 inventory: InventoryManager = None  # type: ignore
@@ -36,7 +36,7 @@ def init_services(
     vd: VLANDiscovery = None,
     arp: ArpSpoofer = None,
 ) -> None:
-    """Initialize shared services — called once from app.py."""
+    """Initialize shared services - called once from app.py."""
     global registry, orchestrator, inventory, sniffer, passive_discovery, metrics_manager, vlan_discovery, arp_spoofer
     registry = reg
     orchestrator = orch

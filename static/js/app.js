@@ -1,5 +1,5 @@
 /**
- * App — SPA router, global state, and utilities.
+ * App - SPA router, global state, and utilities.
  * KISS: hash-based routing, no framework, no build step.
  */
 const App = {
@@ -8,9 +8,9 @@ const App = {
         dashboard: DashboardPage,
         discovery: DiscoveryPage,
         inventory: InventoryPage,
-        sniffer:   SnifferPage,
-        vlans:     VLANsPage,
-        smb:       SMBPage,
+        sniffer: SnifferPage,
+        vlans: VLANsPage,
+        smb: SMBPage,
     },
 
     /**

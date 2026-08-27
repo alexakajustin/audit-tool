@@ -1,5 +1,5 @@
 /**
- * API Client — thin fetch wrapper for backend communication.
+ * API Client - thin fetch wrapper for backend communication.
  * KISS: no axios, no abstraction layers. Just fetch + JSON.
  */
 const API = {
@@ -51,13 +51,13 @@ const API = {
     },
 
     // ── Discovery ──────────────────────────────────────────
-    getInterfaces()     { return this.get('/api/interfaces'); },
-    getScanners()       { return this.get('/api/scanners'); },
-    startScan(config)   { return this.post('/api/discovery/scan', config); },
-    getScanStatus()     { return this.get('/api/discovery/status'); },
-    stopScan()          { return this.post('/api/discovery/stop'); },
-    scanPorts(config)   { return this.post('/api/discovery/scan_ports', config); },
-    scanSMB(config)     { return this.post('/api/discovery/scan_smb', config); },
+    getInterfaces() { return this.get('/api/interfaces'); },
+    getScanners() { return this.get('/api/scanners'); },
+    startScan(config) { return this.post('/api/discovery/scan', config); },
+    getScanStatus() { return this.get('/api/discovery/status'); },
+    stopScan() { return this.post('/api/discovery/stop'); },
+    scanPorts(config) { return this.post('/api/discovery/scan_ports', config); },
+    scanSMB(config) { return this.post('/api/discovery/scan_smb', config); },
     listSMBDirectory(config) { return this.post('/api/discovery/smb_listdir', config); },
     getSMBSessionInfo() { return this.get('/api/discovery/smb_session_info'); },
     unlockVault(password) { return this.post('/api/discovery/unlock-vault', { password }); },
@@ -65,28 +65,28 @@ const API = {
     // ── Passive Discovery ─────────────────────────────────
     getPassiveDiscoveryStatus() { return this.get('/api/passive-discovery/status'); },
     startPassiveDiscovery(config = {}) { return this.post('/api/passive-discovery/start', config); },
-    stopPassiveDiscovery()  { return this.post('/api/passive-discovery/stop'); },
+    stopPassiveDiscovery() { return this.post('/api/passive-discovery/stop'); },
 
     // ── Inventory ──────────────────────────────────────────
     getInventory(params = {}) {
         const query = new URLSearchParams(params).toString();
         return this.get(`/api/inventory${query ? '?' + query : ''}`);
     },
-    getDevice(id)       { return this.get(`/api/inventory/${id}`); },
-    deleteDevice(id)    { return this.delete(`/api/inventory/${id}`); },
-    clearInventory()    { return this.post('/api/inventory/clear'); },
+    getDevice(id) { return this.get(`/api/inventory/${id}`); },
+    deleteDevice(id) { return this.delete(`/api/inventory/${id}`); },
+    clearInventory() { return this.post('/api/inventory/clear'); },
 
     // ── Sniffer ────────────────────────────────────────────
     startSniffer(config) { return this.post('/api/sniffer/start', config); },
-    stopSniffer()        { return this.post('/api/sniffer/stop'); },
-    getSnifferStats()    { return this.get('/api/sniffer/stats'); },
-    getPackets(count=50) { return this.get(`/api/sniffer/packets?count=${count}`); },
+    stopSniffer() { return this.post('/api/sniffer/stop'); },
+    getSnifferStats() { return this.get('/api/sniffer/stats'); },
+    getPackets(count = 50) { return this.get(`/api/sniffer/packets?count=${count}`); },
 
     // ── Stats ──────────────────────────────────────────────
-    getStats()          { return this.get('/api/stats'); },
+    getStats() { return this.get('/api/stats'); },
 
     // ── Metrics Gathering ──────────────────────────────────
-    startMetrics()      { return this.post('/api/metrics/start'); },
-    stopMetrics()       { return this.post('/api/metrics/stop'); },
-    getMetricsStatus()  { return this.get('/api/metrics/status'); },
+    startMetrics() { return this.post('/api/metrics/start'); },
+    stopMetrics() { return this.post('/api/metrics/stop'); },
+    getMetricsStatus() { return this.get('/api/metrics/status'); },
 };

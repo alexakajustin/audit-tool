@@ -11,7 +11,7 @@ python-nmap==0.7.1
 mac-vendor-lookup==0.1.12
 
 # Database
-# Using built-in sqlite3 — no extra dependency needed
+# Using built-in sqlite3 - no extra dependency needed
 
 # Utilities
 psutil==7.0.0

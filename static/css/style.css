@@ -1,53 +1,53 @@
 /* ================================================================
-   NetAudit — Cybersecurity Dark Theme
+   NetAudit - Cybersecurity Dark Theme
    Color Palette: Deep navy → midnight with cyan/green accents
    ================================================================ */
 
 /* ── CSS Custom Properties ─────────────────────────────────────── */
 :root {
     /* Background layers */
-    --bg-deepest:    #060a13;
-    --bg-deep:       #0a0e1a;
-    --bg-base:       #0f1420;
-    --bg-surface:    #151b2b;
-    --bg-elevated:   #1a2138;
-    --bg-hover:      #1f2847;
+    --bg-deepest: #060a13;
+    --bg-deep: #0a0e1a;
+    --bg-base: #0f1420;
+    --bg-surface: #151b2b;
+    --bg-elevated: #1a2138;
+    --bg-hover: #1f2847;
 
     /* Accent colors */
-    --cyan:          #00f0ff;
-    --cyan-dim:      #00b8c5;
-    --cyan-glow:     rgba(0, 240, 255, 0.15);
+    --cyan: #00f0ff;
+    --cyan-dim: #00b8c5;
+    --cyan-glow: rgba(0, 240, 255, 0.15);
     --cyan-glow-strong: rgba(0, 240, 255, 0.3);
-    --green:         #00ff88;
-    --green-dim:     #00c96b;
-    --green-glow:    rgba(0, 255, 136, 0.15);
-    --red:           #ff3b5c;
-    --red-dim:       #cc2e49;
-    --red-glow:      rgba(255, 59, 92, 0.15);
-    --orange:        #ff9f43;
-    --orange-glow:   rgba(255, 159, 67, 0.15);
-    --purple:        #a55eea;
-    --yellow:        #ffd32a;
+    --green: #00ff88;
+    --green-dim: #00c96b;
+    --green-glow: rgba(0, 255, 136, 0.15);
+    --red: #ff3b5c;
+    --red-dim: #cc2e49;
+    --red-glow: rgba(255, 59, 92, 0.15);
+    --orange: #ff9f43;
+    --orange-glow: rgba(255, 159, 67, 0.15);
+    --purple: #a55eea;
+    --yellow: #ffd32a;
 
     /* Text */
-    --text-primary:   #e8edf5;
+    --text-primary: #e8edf5;
     --text-secondary: #8892a8;
-    --text-muted:     #5a6378;
-    --text-accent:    var(--cyan);
+    --text-muted: #5a6378;
+    --text-accent: var(--cyan);
 
     /* Borders */
-    --border:        rgba(255, 255, 255, 0.06);
+    --border: rgba(255, 255, 255, 0.06);
     --border-accent: rgba(0, 240, 255, 0.2);
 
     /* Shadows */
-    --shadow-sm:     0 2px 8px rgba(0, 0, 0, 0.3);
-    --shadow-md:     0 4px 16px rgba(0, 0, 0, 0.4);
-    --shadow-lg:     0 8px 32px rgba(0, 0, 0, 0.5);
-    --shadow-glow:   0 0 20px rgba(0, 240, 255, 0.1);
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+    --shadow-glow: 0 0 20px rgba(0, 240, 255, 0.1);
 
     /* Typography */
-    --font-sans:     'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono:     'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
 
     /* Spacing */
     --sidebar-width: 240px;
@@ -55,7 +55,7 @@
 
     /* Transitions */
     --transition-fast: 150ms ease;
-    --transition:      250ms ease;
+    --transition: 250ms ease;
     --transition-slow: 400ms ease;
 
     /* Border radius */
@@ -66,7 +66,9 @@
 }
 
 /* ── Reset & Base ──────────────────────────────────────────────── */
-*, *::before, *::after {
+*,
+*::before,
+*::after {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
@@ -87,7 +89,12 @@ body {
     overflow: hidden;
 }
 
-h1, h2, h3, h4, h5, h6 {
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
     font-weight: 600;
     letter-spacing: -0.02em;
 }
@@ -714,22 +721,85 @@ select.form-control option {
 }
 
 /* Protocol colors */
-.proto-arp    { background: rgba(0, 240, 255, 0.12); color: #00f0ff; }
-.proto-dns    { background: rgba(165, 94, 234, 0.12); color: #a55eea; }
-.proto-dhcp   { background: rgba(0, 255, 136, 0.12); color: #00ff88; }
-.proto-http   { background: rgba(255, 159, 67, 0.12); color: #ff9f43; }
-.proto-https  { background: rgba(0, 184, 197, 0.12); color: #00b8c5; }
-.proto-tcp    { background: rgba(255, 211, 42, 0.12); color: #ffd32a; }
-.proto-udp    { background: rgba(255, 159, 67, 0.12); color: #ff9f43; }
-.proto-icmp   { background: rgba(255, 59, 92, 0.12); color: #ff3b5c; }
-.proto-ssh    { background: rgba(0, 255, 136, 0.12); color: #00ff88; }
-.proto-smb    { background: rgba(255, 211, 42, 0.12); color: #ffd32a; }
-.proto-mdns   { background: rgba(165, 94, 234, 0.15); color: #c084fc; }
-.proto-llmnr  { background: rgba(0, 184, 197, 0.15); color: #22d3ee; }
-.proto-ssdp   { background: rgba(255, 159, 67, 0.15); color: #fb923c; }
-.proto-netbios { background: rgba(255, 211, 42, 0.15); color: #fde047; }
-.proto-ndp    { background: rgba(0, 240, 255, 0.15); color: #67e8f9; }
-.proto-other  { background: rgba(255, 255, 255, 0.06); color: var(--text-muted); }
+.proto-arp {
+    background: rgba(0, 240, 255, 0.12);
+    color: #00f0ff;
+}
+
+.proto-dns {
+    background: rgba(165, 94, 234, 0.12);
+    color: #a55eea;
+}
+
+.proto-dhcp {
+    background: rgba(0, 255, 136, 0.12);
+    color: #00ff88;
+}
+
+.proto-http {
+    background: rgba(255, 159, 67, 0.12);
+    color: #ff9f43;
+}
+
+.proto-https {
+    background: rgba(0, 184, 197, 0.12);
+    color: #00b8c5;
+}
+
+.proto-tcp {
+    background: rgba(255, 211, 42, 0.12);
+    color: #ffd32a;
+}
+
+.proto-udp {
+    background: rgba(255, 159, 67, 0.12);
+    color: #ff9f43;
+}
+
+.proto-icmp {
+    background: rgba(255, 59, 92, 0.12);
+    color: #ff3b5c;
+}
+
+.proto-ssh {
+    background: rgba(0, 255, 136, 0.12);
+    color: #00ff88;
+}
+
+.proto-smb {
+    background: rgba(255, 211, 42, 0.12);
+    color: #ffd32a;
+}
+
+.proto-mdns {
+    background: rgba(165, 94, 234, 0.15);
+    color: #c084fc;
+}
+
+.proto-llmnr {
+    background: rgba(0, 184, 197, 0.15);
+    color: #22d3ee;
+}
+
+.proto-ssdp {
+    background: rgba(255, 159, 67, 0.15);
+    color: #fb923c;
+}
+
+.proto-netbios {
+    background: rgba(255, 211, 42, 0.15);
+    color: #fde047;
+}
+
+.proto-ndp {
+    background: rgba(0, 240, 255, 0.15);
+    color: #67e8f9;
+}
+
+.proto-other {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-muted);
+}
 
 /* ── Progress Bar ──────────────────────────────────────────────── */
 .progress-bar {
@@ -1089,27 +1159,59 @@ select.form-control option {
 
 /* ── Animations ────────────────────────────────────────────────── */
 @keyframes pulse-glow {
-    0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--green); }
-    50%      { opacity: 0.5; box-shadow: 0 0 4px var(--green); }
+
+    0%,
+    100% {
+        opacity: 1;
+        box-shadow: 0 0 8px var(--green);
+    }
+
+    50% {
+        opacity: 0.5;
+        box-shadow: 0 0 4px var(--green);
+    }
 }
 
 @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 @keyframes toast-in {
-    from { transform: translateX(100%); opacity: 0; }
-    to   { transform: translateX(0); opacity: 1; }
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
 }
 
 @keyframes toast-out {
-    from { transform: translateX(0); opacity: 1; }
-    to   { transform: translateX(100%); opacity: 0; }
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+
+    to {
+        transform: translateX(100%);
+        opacity: 0;
+    }
 }
 
 @keyframes fade-in {
-    from { opacity: 0; transform: translateY(8px); }
-    to   { opacity: 1; transform: translateY(0); }
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 .fade-in {
@@ -1166,8 +1268,17 @@ select.form-control option {
 }
 
 @keyframes pd-pulse {
-    0%, 100% { opacity: 1; box-shadow: 0 0 10px var(--green); }
-    50%      { opacity: 0.4; box-shadow: 0 0 4px var(--green); }
+
+    0%,
+    100% {
+        opacity: 1;
+        box-shadow: 0 0 10px var(--green);
+    }
+
+    50% {
+        opacity: 0.4;
+        box-shadow: 0 0 4px var(--green);
+    }
 }
 
 /* ── Network Intelligence Panels ───────────────────────────────── */
@@ -1266,9 +1377,11 @@ select.form-control option {
     .scan-config {
         grid-template-columns: 1fr;
     }
+
     .grid-2 {
         grid-template-columns: 1fr;
     }
+
     .intel-grid {
         grid-template-columns: 1fr;
     }
@@ -1278,18 +1391,22 @@ select.form-control option {
     .sidebar {
         width: 60px;
     }
+
     .logo-text,
     .nav-item span,
     .sidebar-footer .status-text {
         display: none;
     }
+
     .nav-item {
         justify-content: center;
         padding: 12px;
     }
+
     .page-content {
         padding: 16px;
     }
+
     .stats-grid {
         grid-template-columns: 1fr 1fr;
     }
@@ -1314,6 +1431,7 @@ select.form-control option {
     padding: 16px;
     transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s;
 }
+
 .switch-card:hover {
     border-color: var(--border-accent);
     box-shadow: var(--shadow-glow);
@@ -1328,6 +1446,7 @@ select.form-control option {
     padding-bottom: 10px;
     border-bottom: 1px solid var(--border);
 }
+
 .switch-card-name {
     display: flex;
     align-items: center;
@@ -1348,6 +1467,7 @@ select.form-control option {
     align-items: flex-start;
     gap: 8px;
 }
+
 .switch-label {
     color: var(--text-muted);
     font-size: 0.75rem;
@@ -1355,6 +1475,7 @@ select.form-control option {
     flex-shrink: 0;
     padding-top: 2px;
 }
+
 .switch-value {
     color: var(--text-secondary);
     font-size: 0.82rem;
@@ -1379,26 +1500,31 @@ select.form-control option {
     font-weight: 600;
     letter-spacing: 0.03em;
 }
+
 .vlan-badge-cyan {
     background: rgba(0, 240, 255, 0.12);
     color: var(--cyan);
     border: 1px solid rgba(0, 240, 255, 0.25);
 }
+
 .vlan-badge-green {
     background: rgba(0, 255, 136, 0.12);
     color: var(--green);
     border: 1px solid rgba(0, 255, 136, 0.25);
 }
+
 .vlan-badge-purple {
     background: rgba(165, 94, 234, 0.12);
     color: var(--purple);
     border: 1px solid rgba(165, 94, 234, 0.25);
 }
+
 .vlan-badge-red {
     background: rgba(255, 59, 92, 0.12);
     color: var(--red);
     border: 1px solid rgba(255, 59, 92, 0.25);
 }
+
 .vlan-badge-muted {
     background: rgba(90, 99, 120, 0.12);
     color: var(--text-muted);

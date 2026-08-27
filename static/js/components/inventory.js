@@ -1,5 +1,5 @@
 /**
- * Inventory Component — device inventory with search, sort, filter, and export.
+ * Inventory Component - device inventory with search, sort, filter, and export.
  */
 const InventoryPage = {
     _currentSort: { by: 'last_seen', order: 'desc' },
@@ -133,27 +133,27 @@ const InventoryPage = {
                         ${devices.map(d => `
                             <tr>
                                 <td><span class="badge badge-${d.status}">${d.status}</span></td>
-                                <td class="mono" style="color:var(--cyan)">${d.ip || '—'}</td>
+                                <td class="mono" style="color:var(--cyan)">${d.ip || '-'}</td>
                                 <td class="mono">${d.mac}</td>
-                                <td>${d.vendor || '—'}</td>
-                                <td>${d.hostname || '—'}</td>
-                                <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${d.os || ''}">${d.os || '—'}</td>
+                                <td>${d.vendor || '-'}</td>
+                                <td>${d.hostname || '-'}</td>
+                                <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${d.os || ''}">${d.os || '-'}</td>
                                 <td>
                                     ${d.ports.length > 0
-                                        ? d.ports.slice(0, 5).map(p =>
-                                            `<span class="badge badge-scanner" style="margin:1px">${p.port}</span>`
-                                        ).join('') + (d.ports.length > 5 ? `<span style="color:var(--text-muted)">+${d.ports.length - 5}</span>` : '')
-                                        : '—'}
+                ? d.ports.slice(0, 5).map(p =>
+                    `<span class="badge badge-scanner" style="margin:1px">${p.port}</span>`
+                ).join('') + (d.ports.length > 5 ? `<span style="color:var(--text-muted)">+${d.ports.length - 5}</span>` : '')
+                : '-'}
                                     ${(() => {
-                                        try {
-                                            const n = JSON.parse(d.notes);
-                                            if (n.smb_audit) {
-                                                const accessible = n.smb_audit.details.filter(x => x.accessible).length;
-                                                return `<div style="margin-top:4px;font-size:0.75rem;color:var(--purple)"><b>SMB:</b> ${n.smb_audit.shares_found} shares (${accessible} readable)</div>`;
-                                            }
-                                        } catch(e) {}
-                                        return '';
-                                    })()}
+                try {
+                    const n = JSON.parse(d.notes);
+                    if (n.smb_audit) {
+                        const accessible = n.smb_audit.details.filter(x => x.accessible).length;
+                        return `<div style="margin-top:4px;font-size:0.75rem;color:var(--purple)"><b>SMB:</b> ${n.smb_audit.shares_found} shares (${accessible} readable)</div>`;
+                    }
+                } catch (e) { }
+                return '';
+            })()}
                                 </td>
                                 <td style="color:var(--text-muted);font-size:0.78rem">${this._formatTime(d.last_seen)}</td>
                                 <td>
@@ -209,7 +209,7 @@ const InventoryPage = {
     },
 
     _formatTime(ts) {
-        if (!ts) return '—';
+        if (!ts) return '-';
         const d = new Date(ts * 1000);
         return d.toLocaleString();
     },

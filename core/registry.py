@@ -1,5 +1,5 @@
 """
-Scanner Registry — auto-discovers and manages scanner plugins.
+Scanner Registry - auto-discovers and manages scanner plugins.
 
 Open/Closed: new scanner = new file in scanners/, zero changes here.
 Dependency Inversion: the rest of the system asks the registry for
@@ -63,7 +63,7 @@ class ScannerRegistry:
                         self._scanners[instance.name] = instance
 
             except Exception:
-                # Skip broken scanner modules — don't crash the app
+                # Skip broken scanner modules - don't crash the app
                 continue
 
     def register(self, scanner: BaseScanner) -> None:
@@ -100,7 +100,7 @@ class ScannerRegistry:
         return results
 
     def list_info(self) -> list[dict]:
-        """Get summary info for all scanners — used by the API."""
+        """Get summary info for all scanners - used by the API."""
         info = []
         for scanner in self._scanners.values():
             info.append({

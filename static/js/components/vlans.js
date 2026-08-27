@@ -1,5 +1,5 @@
 /**
- * VLAN Intelligence Component — discovers VLANs, subnets, switches,
+ * VLAN Intelligence Component - discovers VLANs, subnets, switches,
  * and routing topology from infrastructure protocol broadcasts.
  */
 const VLANsPage = {
@@ -207,7 +207,7 @@ const VLANsPage = {
                 App.toast('VLAN Discovery stopped', 'info');
             } else {
                 await API.post('/api/vlans/start');
-                App.toast('VLAN Discovery started — active probes + passive sniffing', 'success');
+                App.toast('VLAN Discovery started - active probes + passive sniffing', 'success');
             }
         } catch (e) {
             App.toast('Failed to toggle VLAN discovery', 'error');
@@ -244,9 +244,9 @@ const VLANsPage = {
             if (statusText) {
                 const probeLabel = status.probe_status === 'running' ? ' | Probes: ACTIVE'
                     : status.probe_status === 'complete' ? ` | Probes: DONE (${status.findings_count || 0} findings)`
-                    : '';
+                        : '';
                 statusText.textContent = status.is_running
-                    ? `ACTIVE — ${status.total_packets || 0} pkts${probeLabel}`
+                    ? `ACTIVE - ${status.total_packets || 0} pkts${probeLabel}`
                     : 'STOPPED';
             }
             if (btn) {
@@ -418,10 +418,10 @@ const VLANsPage = {
         const rows = vlans.map(v => `
             <tr>
                 <td><span class="vlan-id-badge">${v.vlan_id}</span></td>
-                <td>${this._escHtml(v.name || '—')}</td>
-                <td style="font-family:var(--font-mono);font-size:0.8rem">${this._escHtml(v.subnet || '—')}</td>
+                <td>${this._escHtml(v.name || '-')}</td>
+                <td style="font-family:var(--font-mono);font-size:0.8rem">${this._escHtml(v.subnet || '-')}</td>
                 <td><span class="protocol-tag" style="border-color:var(--cyan);color:var(--cyan);font-size:0.7rem">${v.source_protocol.toUpperCase()}</span></td>
-                <td>${this._escHtml(v.source_switch || '—')}</td>
+                <td>${this._escHtml(v.source_switch || '-')}</td>
                 <td>${v.is_native ? '<span class="vlan-badge vlan-badge-green" style="font-size:0.65rem">NATIVE</span>' : ''}</td>
             </tr>
         `).join('');
@@ -450,9 +450,9 @@ const VLANsPage = {
         const rows = subnets.map(s => `
             <tr>
                 <td style="font-family:var(--font-mono);font-size:0.8rem;color:var(--cyan)">${this._escHtml(s.cidr)}</td>
-                <td>${this._escHtml(s.gateway || '—')}</td>
-                <td><span class="protocol-tag" style="border-color:var(--purple);color:var(--purple);font-size:0.7rem">${(s.source_protocol || '—').toUpperCase()}</span></td>
-                <td>${this._escHtml(s.source_router || '—')}</td>
+                <td>${this._escHtml(s.gateway || '-')}</td>
+                <td><span class="protocol-tag" style="border-color:var(--purple);color:var(--purple);font-size:0.7rem">${(s.source_protocol || '-').toUpperCase()}</span></td>
+                <td>${this._escHtml(s.source_router || '-')}</td>
                 <td><button class="btn btn-sm btn-outline-cyan" onclick="VLANsPage.scanSubnet('${s.cidr}')" style="font-size:0.7rem;padding:2px 6px">Scan Subnet</button></td>
             </tr>
         `).join('');
@@ -495,11 +495,11 @@ const VLANsPage = {
             return `
                 <tr>
                     <td style="font-family:var(--font-mono);font-size:0.8rem">${this._escHtml(r.destination)}</td>
-                    <td>${this._escHtml(r.next_hop || '—')}</td>
+                    <td>${this._escHtml(r.next_hop || '-')}</td>
                     <td>${r.metric}</td>
                     <td><span class="protocol-tag" style="border-color:${color};color:${color};font-size:0.7rem">${r.protocol.toUpperCase()}</span></td>
-                    <td>${this._escHtml(r.advertising_router || '—')}</td>
-                    <td>${r.area || r.as_number || '—'}</td>
+                    <td>${this._escHtml(r.advertising_router || '-')}</td>
+                    <td>${r.area || r.as_number || '-'}</td>
                 </tr>
             `;
         }).join('');
@@ -528,7 +528,7 @@ const VLANsPage = {
             App.toast(`Sweeping ${cidr} for live hosts...`, 'info');
             await API.post('/api/vlans/sweep', { cidr });
             App.toast(`Host sweep started for ${cidr}! Results will appear in Cross-VLAN Hosts.`, 'success');
-        } catch(e) {
+        } catch (e) {
             App.toast(`Failed to start sweep for ${cidr}`, 'error');
         }
     },
@@ -538,8 +538,8 @@ const VLANsPage = {
         if (btn) btn.disabled = true;
         try {
             await API.post('/api/vlans/probe');
-            App.toast('Active probes launched — SNMP, gateway sweep, cross-VLAN tests', 'success');
-        } catch(e) {
+            App.toast('Active probes launched - SNMP, gateway sweep, cross-VLAN tests', 'success');
+        } catch (e) {
             App.toast('Failed to launch probes', 'error');
         }
         if (btn) setTimeout(() => { btn.disabled = false; }, 3000);
@@ -556,10 +556,10 @@ const VLANsPage = {
 
         const severityConfig = {
             'critical': { color: '#ff1744', icon: '🔴', label: 'CRITICAL' },
-            'high':     { color: 'var(--orange)', icon: '🟠', label: 'HIGH' },
-            'medium':   { color: '#ffd600', icon: '🟡', label: 'MEDIUM' },
-            'low':      { color: 'var(--cyan)', icon: '🔵', label: 'LOW' },
-            'info':     { color: 'var(--text-muted)', icon: 'ℹ️', label: 'INFO' },
+            'high': { color: 'var(--orange)', icon: '🟠', label: 'HIGH' },
+            'medium': { color: '#ffd600', icon: '🟡', label: 'MEDIUM' },
+            'low': { color: 'var(--cyan)', icon: '🔵', label: 'LOW' },
+            'info': { color: 'var(--text-muted)', icon: 'ℹ️', label: 'INFO' },
         };
 
         const cards = findings.map(f => {
@@ -602,8 +602,8 @@ const VLANsPage = {
         const rows = hosts.map(h => {
             const osColor = h.os_hint === 'Windows' ? 'var(--cyan)'
                 : h.os_hint === 'Linux/macOS/IoT' ? 'var(--green)'
-                : h.os_hint === 'Network Device' ? 'var(--orange)'
-                : 'var(--text-muted)';
+                    : h.os_hint === 'Network Device' ? 'var(--orange)'
+                        : 'var(--text-muted)';
             const methodBadge = h.method === 'tcp'
                 ? `<span class="protocol-tag" style="border-color:var(--orange);color:var(--orange);font-size:0.65rem">TCP:${h.open_port}</span>`
                 : '<span class="protocol-tag" style="border-color:var(--green);color:var(--green);font-size:0.65rem">PING</span>';
@@ -612,8 +612,8 @@ const VLANsPage = {
                 <tr>
                     <td style="font-family:var(--font-mono);font-size:0.82rem;color:var(--red);font-weight:500">${this._escHtml(h.ip)}</td>
                     <td style="font-family:var(--font-mono);font-size:0.78rem">${this._escHtml(h.subnet)}</td>
-                    <td>${h.ttl || '—'}</td>
-                    <td><span style="color:${osColor};font-weight:500;font-size:0.82rem">${this._escHtml(h.os_hint || '—')}</span></td>
+                    <td>${h.ttl || '-'}</td>
+                    <td><span style="color:${osColor};font-weight:500;font-size:0.82rem">${this._escHtml(h.os_hint || '-')}</span></td>
                     <td>${methodBadge}</td>
                     <td style="color:var(--text-muted);font-size:0.75rem">${age}</td>
                 </tr>

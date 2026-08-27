@@ -1,5 +1,5 @@
 """
-Passive Network Sniffer — captures and analyzes traffic without injection.
+Passive Network Sniffer - captures and analyzes traffic without injection.
 
 Runs in a background thread. Yields PacketInfo objects for real-time
 streaming via WebSocket. Supports BPF filters and PCAP import/export.
@@ -638,7 +638,7 @@ class PassiveSniffer(BaseSniffer):
             if offset + 2 > len(payload):
                 return ""
 
-            # Packet Length (variable-length integer) — skip
+            # Packet Length (variable-length integer) - skip
             pkt_len_first = payload[offset]
             pkt_len_type = (pkt_len_first & 0xC0) >> 6
             if pkt_len_type == 0:
@@ -742,7 +742,7 @@ class PassiveSniffer(BaseSniffer):
             return ""
 
     def _capture_loop(self, interface: str, bpf_filter: str) -> None:
-        """Background capture thread — runs Scapy sniff()."""
+        """Background capture thread - runs Scapy sniff()."""
         try:
             from scapy.all import sniff, conf
             import traceback
@@ -778,7 +778,7 @@ class PassiveSniffer(BaseSniffer):
             self._running = False
 
     def _worker_loop(self) -> None:
-        """Background thread — processes packets off the queue to avoid blocking Scapy."""
+        """Background thread - processes packets off the queue to avoid blocking Scapy."""
         while self._running:
             try:
                 pkt = self._packet_queue.get(timeout=1.0)
@@ -840,7 +840,7 @@ class PassiveSniffer(BaseSniffer):
             if info.src_mac and info.src and not info.src.startswith("ff:"):
                 self._mac_to_ip[info.src_mac] = info.src
 
-            # Track DNS queries (what sites are being browsed) — GLOBAL + PER-DEVICE
+            # Track DNS queries (what sites are being browsed) - GLOBAL + PER-DEVICE
             dns_pkt = None
             if pkt.haslayer(DNS):
                 dns_pkt = pkt[DNS]
@@ -995,7 +995,7 @@ class PassiveSniffer(BaseSniffer):
                                             self._security_alerts.append({
                                                 "type": "dns_bypass_doh",
                                                 "severity": "warning",
-                                                "message": f"DNS-over-HTTPS detected via {sni} — DNS queries are hidden from monitoring",
+                                                "message": f"DNS-over-HTTPS detected via {sni} - DNS queries are hidden from monitoring",
                                                 "src": client_ip,
                                                 "dst": info.dst,
                                                 "timestamp": info.timestamp,
@@ -1031,7 +1031,7 @@ class PassiveSniffer(BaseSniffer):
                                             self._security_alerts.append({
                                                 "type": "dns_bypass_doh",
                                                 "severity": "warning",
-                                                "message": f"DNS-over-HTTPS (QUIC) detected via {quic_sni} — DNS queries are hidden",
+                                                "message": f"DNS-over-HTTPS (QUIC) detected via {quic_sni} - DNS queries are hidden",
                                                 "src": client_ip,
                                                 "dst": info.dst,
                                                 "timestamp": info.timestamp,
@@ -1057,7 +1057,7 @@ class PassiveSniffer(BaseSniffer):
                         })
 
             # ── Security alerts ──────────────────────────────
-            # Cleartext HTTP traffic — deep extraction (Host, URL, User-Agent)
+            # Cleartext HTTP traffic - deep extraction (Host, URL, User-Agent)
             if info.protocol == "HTTP" and pkt.haslayer(Raw):
                 raw = bytes(pkt[Raw].load)
                 try:
@@ -1378,37 +1378,37 @@ class PassiveSniffer(BaseSniffer):
             # TLS record: ContentType(1) Version(2) Length(2) HandshakeType(1) ...
             content_type = payload[0]
             if content_type != 0x16:  # Not a Handshake record
-                return self._find_sni_in_bytes(payload)
+                return ""
 
             handshake_type = payload[5]
             if handshake_type != 0x01:  # Not ClientHello
-                return self._find_sni_in_bytes(payload)
+                return ""
 
             offset = 5 + 1 + 3 + 2 + 32  # Skip to SessionID length (offset 43)
 
             if offset >= len(payload):
-                return self._find_sni_in_bytes(payload)
+                return ""
 
             # Skip Session ID
             session_id_len = payload[offset]
             offset += 1 + session_id_len
 
             if offset + 2 > len(payload):
-                return self._find_sni_in_bytes(payload)
+                return ""
 
             # Skip Cipher Suites
             cipher_suites_len = (payload[offset] << 8) | payload[offset + 1]
             offset += 2 + cipher_suites_len
 
             if offset + 1 > len(payload):
-                return self._find_sni_in_bytes(payload)
+                return ""
 
             # Skip Compression Methods
             compression_len = payload[offset]
             offset += 1 + compression_len
 
             if offset + 2 > len(payload):
-                return self._find_sni_in_bytes(payload)
+                return ""
 
             # Extensions
             extensions_len = (payload[offset] << 8) | payload[offset + 1]
@@ -1435,32 +1435,12 @@ class PassiveSniffer(BaseSniffer):
 
                 offset += ext_len
 
-            return self._find_sni_in_bytes(payload)
+                offset += ext_len
+
+            return ""
 
         except Exception:
-            return self._find_sni_in_bytes(payload)
-
-    def _find_sni_in_bytes(self, payload: bytes) -> str:
-        """Fallback: roughly search for SNI-like domains in raw payload if struct parsing fails."""
-        try:
-            import re
-            matches = re.findall(br'([a-zA-Z0-9-]+\.[a-zA-Z0-9.-]+)', payload)
-            for match in matches:
-                try:
-                    s = match.decode('ascii')
-                    if len(s) > 4 and ' ' not in s and not s.endswith('.arpa'):
-                        return s
-                except Exception:
-                    continue
-        except Exception:
-            pass
-        return ""
-
-    def _extract_quic_sni(self, payload: bytes) -> str:
-        """Extract SNI from QUIC (HTTP/3) packets using heuristic."""
-        # QUIC Initial packets contain the SNI in plaintext, but the format is very complex.
-        # Use the same regex fallback for simplicity since it works reasonably well for discovery.
-        return self._find_sni_in_bytes(payload)
+            return ""
 
     def _guess_os(self, user_agent: str) -> str:
         """Guess the operating system from an HTTP User-Agent string."""
@@ -1508,7 +1488,7 @@ class PassiveSniffer(BaseSniffer):
                 src_mac = pkt[Ether].src.upper() if pkt[Ether].src else ""
                 dst_mac = pkt[Ether].dst.upper() if pkt[Ether].dst else ""
 
-            # Layer 2 — ARP
+            # Layer 2 - ARP
             if pkt.haslayer(ARP):
                 arp = pkt[ARP]
                 protocol = "ARP"
@@ -1517,7 +1497,7 @@ class PassiveSniffer(BaseSniffer):
                 op = "who-has" if arp.op == 1 else "is-at"
                 summary = f"ARP {op} {dst} → {arp.hwsrc}"
 
-            # Layer 3 — IP based
+            # Layer 3 - IP based
             elif pkt.haslayer(IP):
                 ip = pkt[IP]
                 src = ip.src

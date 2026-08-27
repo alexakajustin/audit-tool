@@ -1,5 +1,5 @@
 """
-Discovery API routes — scan management and interface listing.
+Discovery API routes - scan management and interface listing.
 Thin adapter: validate input → call core → format output.
 """
 
@@ -35,10 +35,10 @@ def start_scan():
     Start a network discovery scan.
 
     Body JSON:
-        subnet: str (required) — e.g. "192.168.1.0/24"
-        interface: str (optional) — network interface name
-        scanners: list[str] (optional) — scanner names to use
-        options: dict (optional) — scanner-specific options
+        subnet: str (required) - e.g. "192.168.1.0/24"
+        interface: str (optional) - network interface name
+        scanners: list[str] (optional) - scanner names to use
+        options: dict (optional) - scanner-specific options
     """
     data = request.get_json(force=True, silent=True) or {}
 

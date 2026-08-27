@@ -1,5 +1,5 @@
 """
-Topology API routes — constructs a graph of the network infrastructure.
+Topology API routes - constructs a graph of the network infrastructure.
 Dynamically maps multi-hop routing chains (e.g. PC -> .88.1 -> .99.1 -> 10.x -> Internet)
 using exact traceroute hop levels for a true hierarchical network layout.
 """

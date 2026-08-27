@@ -1,5 +1,5 @@
 """
-Lightweight SNMPv2c client — zero external dependencies.
+Lightweight SNMPv2c client - zero external dependencies.
 
 Implements BER/ASN.1 encoding/decoding for SNMP GetRequest, GetNextRequest,
 and GetBulkRequest PDUs over standard UDP sockets. No admin rights needed.
@@ -242,7 +242,7 @@ def _decode_snmp_value(tag: int, value: bytes):
     elif tag in (ASN1_NOSUCHOBJECT, ASN1_NOSUCHINSTANCE, ASN1_ENDOFMIBVIEW):
         return None
     else:
-        # Unknown tag — return raw hex
+        # Unknown tag - return raw hex
         return value.hex()
 
 
@@ -548,14 +548,14 @@ def snmp_get_interfaces(
     """
     interfaces = {}
 
-    # ifDescr — interface names
+    # ifDescr - interface names
     for oid, value in snmp_walk(host, community, "1.3.6.1.2.1.2.2.1.2", port, timeout):
         idx = oid.split(".")[-1]
         if idx not in interfaces:
             interfaces[idx] = {"index": int(idx), "name": "", "type": 0, "admin_status": 0, "ip": "", "netmask": ""}
         interfaces[idx]["name"] = str(value) if value else ""
 
-    # ifType — interface types (6=ethernet, 53=propVirtual/VLAN, 131=tunnel, 135=l2vlan, 136=l3ipvlan)
+    # ifType - interface types (6=ethernet, 53=propVirtual/VLAN, 131=tunnel, 135=l2vlan, 136=l3ipvlan)
     for oid, value in snmp_walk(host, community, "1.3.6.1.2.1.2.2.1.3", port, timeout):
         idx = oid.split(".")[-1]
         if idx in interfaces:
@@ -567,7 +567,7 @@ def snmp_get_interfaces(
         if idx in interfaces:
             interfaces[idx]["admin_status"] = int(value) if value else 0
 
-    # ipAdEntAddr — IP addresses per interface
+    # ipAdEntAddr - IP addresses per interface
     ip_to_ifindex = {}
     for oid, value in snmp_walk(host, community, "1.3.6.1.2.1.4.20.1.2", port, timeout):
         # OID: 1.3.6.1.2.1.4.20.1.2.<ip_addr> = ifIndex
@@ -575,7 +575,7 @@ def snmp_get_interfaces(
         if value:
             ip_to_ifindex[str(value)] = ip_addr
 
-    # ipAdEntNetMask — netmasks per IP
+    # ipAdEntNetMask - netmasks per IP
     ip_netmasks = {}
     for oid, value in snmp_walk(host, community, "1.3.6.1.2.1.4.20.1.3", port, timeout):
         ip_addr = ".".join(oid.split(".")[-4:])
@@ -672,13 +672,13 @@ def snmp_get_routes(
         if dest in routes:
             routes[dest]["next_hop"] = str(value) if value else ""
 
-    # ipRouteType (1.3.6.1.2.1.4.21.1.8) — 1=other, 2=invalid, 3=direct, 4=indirect
+    # ipRouteType (1.3.6.1.2.1.4.21.1.8) - 1=other, 2=invalid, 3=direct, 4=indirect
     for oid, value in snmp_walk(host, community, "1.3.6.1.2.1.4.21.1.8", port, timeout):
         dest = ".".join(oid.split(".")[-4:])
         if dest in routes:
             routes[dest]["type"] = int(value) if value else 0
 
-    # ipRouteProto (1.3.6.1.2.1.4.21.1.9) — 2=local, 3=netmgmt, 8=rip, 13=ospf, 14=bgp
+    # ipRouteProto (1.3.6.1.2.1.4.21.1.9) - 2=local, 3=netmgmt, 8=rip, 13=ospf, 14=bgp
     for oid, value in snmp_walk(host, community, "1.3.6.1.2.1.4.21.1.9", port, timeout):
         dest = ".".join(oid.split(".")[-4:])
         if dest in routes:

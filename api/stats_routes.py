@@ -1,5 +1,5 @@
 """
-Stats API routes — dashboard aggregate statistics.
+Stats API routes - dashboard aggregate statistics.
 """
 
 from flask import Blueprint, jsonify

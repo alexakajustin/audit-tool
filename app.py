@@ -1,5 +1,5 @@
 """
-NetAudit — Advanced Cybersecurity Audit & Network Discovery Tool
+NetAudit - Advanced Cybersecurity Audit & Network Discovery Tool
 
 Entry point: wires together all components and starts the Flask server.
 """
@@ -24,7 +24,7 @@ import api
 
 
 def create_app() -> tuple[Flask, SocketIO]:
-    """Application factory — creates and configures the Flask app."""
+    """Application factory - creates and configures the Flask app."""
 
     # Ensure data directories exist
     Config.ensure_dirs()
@@ -70,29 +70,29 @@ def create_app() -> tuple[Flask, SocketIO]:
     socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
     # ── Wire up core services ────────────────────────────────
-    # 1. Scanner Registry — auto-discovers scanner plugins
+    # 1. Scanner Registry - auto-discovers scanner plugins
     registry = ScannerRegistry()
     registry.discover("scanners")
 
-    # 2. Scan Orchestrator — coordinates multi-scanner runs
+    # 2. Scan Orchestrator - coordinates multi-scanner runs
     orchestrator = ScanOrchestrator(registry)
 
-    # 3. Inventory Manager — SQLite persistence
+    # 3. Inventory Manager - SQLite persistence
     inventory = InventoryManager(Config.DB_PATH)
 
     # 4. Passive Sniffer
     sniffer = PassiveSniffer()
 
-    # 5. Passive Discovery Engine — mines broadcast traffic
+    # 5. Passive Discovery Engine - mines broadcast traffic
     passive_discovery = PassiveDiscovery()
 
-    # 6. Metrics Manager — delta background intelligence
+    # 6. Metrics Manager - delta background intelligence
     metrics_manager = MetricsManager()
 
-    # 7. VLAN Discovery Engine — infrastructure protocol intelligence
+    # 7. VLAN Discovery Engine - infrastructure protocol intelligence
     vlan_discovery = VLANDiscovery()
 
-    # 8. ARP Spoofer / MITM Engine — active traffic interception
+    # 8. ARP Spoofer / MITM Engine - active traffic interception
     arp_spoofer = ArpSpoofer()
     arp_spoofer.set_sniffer(sniffer)  # Link MITM to sniffer for auto-start & tagging
 
@@ -120,7 +120,7 @@ def create_app() -> tuple[Flask, SocketIO]:
     app.register_blueprint(mitm_bp)
     app.register_blueprint(topology_bp)
 
-    # ── Root route — serves the SPA ──────────────────────────
+    # ── Root route - serves the SPA ──────────────────────────
     @app.route("/")
     def index():
         return render_template("index.html")
@@ -182,7 +182,7 @@ def create_app() -> tuple[Flask, SocketIO]:
     available_count = len(registry.get_available())
 
     print(f"\n{'='*60}")
-    print(f"  NetAudit — Cybersecurity Discovery Tool")
+    print(f"  NetAudit - Cybersecurity Discovery Tool")
     print(f"{'='*60}")
     print(f"  Scanners registered: {scanner_count} ({available_count} available)")
     for s in registry.get_all():

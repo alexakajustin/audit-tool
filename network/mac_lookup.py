@@ -10,7 +10,7 @@ import os
 import urllib.request
 from typing import Optional
 
-# Simple dict cache — YAGNI: no TTL, no eviction, no Redis
+# Simple dict cache - YAGNI: no TTL, no eviction, no Redis
 _cache: dict[str, str] = {}
 
 # In-memory database of OUI -> Vendor

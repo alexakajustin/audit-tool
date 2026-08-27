@@ -1,9 +1,9 @@
 """
-ARP Spoofer / MITM Engine — Active network interception (Half-Duplex).
+ARP Spoofer / MITM Engine - Active network interception (Half-Duplex).
 
 Redirects OUTBOUND traffic from target devices through the audit PC by
 sending crafted ARP replies (target-only poisoning). The gateway is NOT
-poisoned, so return traffic flows directly to targets — this prevents
+poisoned, so return traffic flows directly to targets - this prevents
 connectivity disruption while still capturing all audit-relevant data
 (DNS queries, TLS SNI, HTTP requests, browsing history).
 
@@ -326,7 +326,7 @@ class ArpSpoofer:
         self._thread.start()
 
         target_list = ", ".join(self._targets.keys())
-        print(f"[MITM] STARTED — Spoofing {len(self._targets)} targets: {target_list}")
+        print(f"[MITM] STARTED - Spoofing {len(self._targets)} targets: {target_list}")
         print(f"[MITM] Gateway: {self._gateway_ip} ({self._gateway_mac})")
 
         return self.get_status()
@@ -351,8 +351,12 @@ class ArpSpoofer:
         result = self.get_status()
         
         self._targets = {}
+        
+        # Clear the sniffer's intercepted IPs state
+        if self._sniffer:
+            self._sniffer.set_intercepted_ips(set())
 
-        print(f"[MITM] STOPPED — ARP tables restored for {target_count} targets")
+        print(f"[MITM] STOPPED - ARP tables restored for {target_count} targets")
         return result
 
     def _get_spoof_interval(self, target_count: int) -> float:
@@ -404,7 +408,7 @@ class ArpSpoofer:
                         # Half-Duplex: ONLY poison the TARGET's ARP cache.
                         # Tell the TARGET: "Gateway IP is at MY MAC"
                         # This makes the target send outbound traffic to us.
-                        # The GATEWAY is NOT poisoned — return traffic goes
+                        # The GATEWAY is NOT poisoned - return traffic goes
                         # directly to the target, so connectivity is preserved.
                         pkt_to_target = Ether(dst=target_mac) / ARP(
                             op=2,  # ARP Reply
@@ -647,7 +651,7 @@ class ArpSpoofer:
                 print("[MITM] IP forwarding enabled (Linux)")
                 return
 
-            # Windows — get interface index for scoped forwarding
+            # Windows - get interface index for scoped forwarding
             self._interface_index = self._get_interface_index()
 
             # Check current forwarding state on the specific interface
@@ -665,7 +669,7 @@ class ArpSpoofer:
                  "/v", "IPEnableRouting", "/t", "REG_DWORD", "/d", "1", "/f"],
                 capture_output=True, timeout=10,
             )
-            # Suppress ICMP redirects — prevents Windows from flooding targets with
+            # Suppress ICMP redirects - prevents Windows from flooding targets with
             # redirect packets when forwarding across the same adapter interface.
             subprocess.run(
                 ["reg", "add", r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters",
@@ -830,7 +834,7 @@ def _atexit_cleanup():
     """Emergency ARP restoration on process exit."""
     global _INSTANCE
     if _INSTANCE and _INSTANCE._running:
-        print("[MITM] Emergency cleanup — restoring ARP tables...")
+        print("[MITM] Emergency cleanup - restoring ARP tables...")
         _INSTANCE._running = False
         _INSTANCE._restore_arp()
         _INSTANCE._disable_ip_forwarding()

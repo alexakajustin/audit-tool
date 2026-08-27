@@ -1,8 +1,8 @@
 """
-Scan Orchestrator — coordinates running multiple scanners and merging results.
+Scan Orchestrator - coordinates running multiple scanners and merging results.
 
 Dependency Inversion: depends on BaseScanner (abstraction), not on
-concrete scanner classes. Doesn't know about Flask or WebSockets —
+concrete scanner classes. Doesn't know about Flask or WebSockets -
 communicates progress via callbacks.
 """
 
@@ -184,7 +184,7 @@ class _ScanJob:
                     pass
 
     def _on_single_device(self, device: Device) -> None:
-        """Handle a newly discovered device — merge or add."""
+        """Handle a newly discovered device - merge or add."""
         mac = device.mac
 
         # Match existing device by MAC or IP (handling placeholder MACs)

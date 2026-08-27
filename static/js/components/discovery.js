@@ -1,5 +1,5 @@
 /**
- * Discovery Component — configure and launch network scans.
+ * Discovery Component - configure and launch network scans.
  * Includes passive discovery status and active scan configuration.
  */
 const DiscoveryPage = {
@@ -113,7 +113,7 @@ const DiscoveryPage = {
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
                                 <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
                             </svg>
-                            <p>No devices discovered yet. Passive discovery is running in the background — devices will appear automatically. You can also run an active scan above.</p>
+                            <p>No devices discovered yet. Passive discovery is running in the background - devices will appear automatically. You can also run an active scan above.</p>
                         </div>
                     </div>
                 </div>
@@ -201,7 +201,7 @@ const DiscoveryPage = {
             select.innerHTML = data.interfaces.map(iface => {
                 const ipText = iface.ip ? `${iface.ip} (${iface.subnet})` : 'Unconnected (e.g. Wi-Fi AP Scan)';
                 return `<option value="${iface.name}" ${data.recommended && iface.name === data.recommended.name ? 'selected' : ''}>
-                    ${iface.name} — ${ipText}
+                    ${iface.name} - ${ipText}
                 </option>`;
             }).join('');
 
@@ -227,8 +227,8 @@ const DiscoveryPage = {
             const container = document.getElementById('disc-scanners');
             container.innerHTML = data.scanners.map(s => {
                 const isSelected = this._selectedScanners.has(s.name);
-                const classStr = s.available 
-                    ? (isSelected ? 'scanner-chip selected' : 'scanner-chip') 
+                const classStr = s.available
+                    ? (isSelected ? 'scanner-chip selected' : 'scanner-chip')
                     : 'scanner-chip unavailable';
                 return `
                     <div class="${classStr}"
@@ -423,27 +423,27 @@ const DiscoveryPage = {
                         ${devices.map(d => `
                             <tr>
                                 <td><span class="badge badge-${d.status}">${d.status}</span></td>
-                                <td class="mono" style="color:var(--cyan)">${d.ip || '—'}</td>
+                                <td class="mono" style="color:var(--cyan)">${d.ip || '-'}</td>
                                 <td class="mono">${d.mac}</td>
-                                <td>${d.vendor || '—'}</td>
-                                <td>${d.hostname || '—'}</td>
-                                <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis">${d.os || '—'}</td>
+                                <td>${d.vendor || '-'}</td>
+                                <td>${d.hostname || '-'}</td>
+                                <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis">${d.os || '-'}</td>
                                 <td>${d.ports && d.ports.length > 0 ? d.ports.map(p =>
-                                    `<span class="badge badge-scanner" style="margin:1px;background:rgba(0,212,255,0.12);color:var(--cyan);border:1px solid rgba(0,212,255,0.3)" title="${p.service || ''} ${p.version || ''}">${p.port}/${p.protocol}${p.service && p.service !== 'unknown' ? ' (' + p.service + ')' : ''}</span>`
-                                ).join('') : '<span style="color:var(--text-muted)">—</span>'}</td>
+            `<span class="badge badge-scanner" style="margin:1px;background:rgba(0,212,255,0.12);color:var(--cyan);border:1px solid rgba(0,212,255,0.3)" title="${p.service || ''} ${p.version || ''}">${p.port}/${p.protocol}${p.service && p.service !== 'unknown' ? ' (' + p.service + ')' : ''}</span>`
+        ).join('') : '<span style="color:var(--text-muted)">-</span>'}</td>
                                 <td>${d.discovery_methods.map(m =>
-                                    `<span class="badge badge-scanner" style="margin:1px;font-size:0.65rem">${m}</span>`
-                                ).join('')}
+            `<span class="badge badge-scanner" style="margin:1px;font-size:0.65rem">${m}</span>`
+        ).join('')}
                                 ${(() => {
-                                    try {
-                                        const n = JSON.parse(d.notes);
-                                        if (n.smb_audit) {
-                                            const accessible = n.smb_audit.details.filter(x => x.accessible).length;
-                                            return `<div style="margin-top:4px;font-size:0.75rem;color:var(--purple)"><b>SMB:</b> ${n.smb_audit.shares_found} shares (${accessible} readable)</div>`;
-                                        }
-                                    } catch(e) {}
-                                    return '';
-                                })()}
+                try {
+                    const n = JSON.parse(d.notes);
+                    if (n.smb_audit) {
+                        const accessible = n.smb_audit.details.filter(x => x.accessible).length;
+                        return `<div style="margin-top:4px;font-size:0.75rem;color:var(--purple)"><b>SMB:</b> ${n.smb_audit.shares_found} shares (${accessible} readable)</div>`;
+                    }
+                } catch (e) { }
+                return '';
+            })()}
                                 </td>
                             </tr>
                         `).join('')}

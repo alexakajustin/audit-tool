@@ -1,6 +1,6 @@
 """
 Abstract base classes for scanners and sniffers.
-This is the contract — every plugin implements these interfaces.
+This is the contract - every plugin implements these interfaces.
 The rest of the system depends ONLY on these abstractions.
 """
 
@@ -61,7 +61,7 @@ class BaseScanner(ABC):
         Args:
             target: What to scan (subnet, interface, options).
             on_device_found: Optional callback invoked each time a device
-                             is discovered — enables real-time progress.
+                             is discovered - enables real-time progress.
 
         Returns:
             ScanResult containing all discovered devices.

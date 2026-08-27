@@ -1,5 +1,5 @@
 """
-Native TCP Port Scanner — Fast, multi-threaded pure Python port scanner.
+Native TCP Port Scanner - Fast, multi-threaded pure Python port scanner.
 
 Scans common ports without requiring external dependencies (no Nmap binary needed).
 Works on all platforms (Windows, Linux, macOS) without administrator privileges.
@@ -113,7 +113,7 @@ class PortScanner(BaseScanner):
         )
 
     def is_available(self) -> bool:
-        """Native scanner — always available."""
+        """Native scanner - always available."""
         return True
 
     def scan(

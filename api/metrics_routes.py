@@ -1,5 +1,5 @@
 """
-api/metrics_routes.py — Flask routes for background metrics gathering and report downloading.
+api/metrics_routes.py - Flask routes for background metrics gathering and report downloading.
 """
 
 import os
@@ -33,7 +33,13 @@ def stop_metrics():
     if not api.metrics_manager.is_gathering:
         return jsonify({"error": "Metrics gathering is not active"}), 400
 
+    # Generate report FIRST while MITM data is still live
     result = api.metrics_manager.stop(api.sniffer, Config.EXPORT_DIR)
+
+    # THEN stop interception (after PDF has captured the stats)
+    if api.arp_spoofer and api.arp_spoofer.is_running:
+        api.arp_spoofer.stop()
+
     return jsonify(result)
 
 @metrics_bp.route("/api/metrics/status", methods=["GET"])

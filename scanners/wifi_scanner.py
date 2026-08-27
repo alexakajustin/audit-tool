@@ -1,5 +1,5 @@
 """
-WiFi Scanner — discovers nearby wireless networks (SSIDs, BSSIDs, signals).
+WiFi Scanner - discovers nearby wireless networks (SSIDs, BSSIDs, signals).
 
 Uses the native Windows 'netsh wlan' API.
 Zero network connection required. Does not require admin privileges.
@@ -143,8 +143,8 @@ class WifiScanner(BaseScanner):
                 mac = mac_match.group(1).upper().replace("-", ":")
                 
                 # Parse signal, channel, etc.
-                signal = "—"
-                channel = "—"
+                signal = "-"
+                channel = "-"
                 for line in bss_lines[1:]:
                     if "Signal" in line:
                         signal = line.split(":", 1)[1].strip()

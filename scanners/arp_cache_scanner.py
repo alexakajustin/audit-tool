@@ -1,5 +1,5 @@
 """
-ARP Cache Scanner — reads the local OS ARP table.
+ARP Cache Scanner - reads the local OS ARP table.
 
 Zero network traffic, zero privileges needed.
 Great as a fast, non-intrusive first pass.
@@ -25,7 +25,7 @@ from network.mac_lookup import lookup_vendor
 
 
 class ArpCacheScanner(BaseScanner):
-    """Reads the local ARP cache — no packets sent, no admin needed."""
+    """Reads the local ARP cache - no packets sent, no admin needed."""
 
     @property
     def name(self) -> str:

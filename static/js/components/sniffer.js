@@ -1,5 +1,5 @@
 /**
- * Sniffer Component — passive packet capture with live console.
+ * Sniffer Component - passive packet capture with live console.
  * Enhanced: Network Intelligence panel, auto-exclude local IP,
  * security alerts, DNS query tracking, top talkers.
  */
@@ -164,7 +164,7 @@ const SnifferPage = {
                         <div class="card-header">
                             <span class="card-title" style="color:var(--cyan);display:flex;align-items:center;gap:6px">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
-                                DNS QUERIES — Sites Being Browsed
+                                DNS QUERIES - Sites Being Browsed
                             </span>
                         </div>
                         <div id="intel-dns" class="intel-scroll" style="max-height:180px;overflow-y:auto">
@@ -177,7 +177,7 @@ const SnifferPage = {
                         <div class="card-header">
                             <span class="card-title" style="color:var(--green);display:flex;align-items:center;gap:6px">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                                TOP TALKERS — Data Volume
+                                TOP TALKERS - Data Volume
                             </span>
                         </div>
                         <div id="intel-talkers" class="intel-scroll" style="max-height:180px;overflow-y:auto">
@@ -206,7 +206,7 @@ const SnifferPage = {
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px">
                                 <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>
                             </svg>
-                            DEVICE ACTIVITY PROFILER — Who Is Doing What
+                            DEVICE ACTIVITY PROFILER - Who Is Doing What
                         </span>
                         <span id="profile-count-badge" style="color:var(--text-muted);font-size:0.75rem">0 devices</span>
                     </div>
@@ -222,7 +222,7 @@ const SnifferPage = {
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px">
                                 <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
                             </svg>
-                            LIVE ACTIVITY FEED — All Devices
+                            LIVE ACTIVITY FEED - All Devices
                             <span id="feed-live-dot" style="width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse-glow 2s ease-in-out infinite;display:none"></span>
                         </span>
                         <span id="feed-count" style="color:var(--text-muted);font-size:0.75rem">0 events</span>
@@ -312,7 +312,7 @@ const SnifferPage = {
                 const opt = document.createElement('option');
                 opt.value = iface.name;
                 const ipText = iface.ip ? iface.ip : 'Unconnected';
-                opt.textContent = `${iface.name} — ${ipText}`;
+                opt.textContent = `${iface.name} - ${ipText}`;
                 if (data.recommended && iface.name === data.recommended.name) opt.selected = true;
                 select.appendChild(opt);
             });
@@ -349,7 +349,7 @@ const SnifferPage = {
     async stop() {
         try {
             const result = await API.stopSniffer();
-            App.toast(`Sniffer stopped — ${result.total_packets} packets captured`, 'info');
+            App.toast(`Sniffer stopped - ${result.total_packets} packets captured`, 'info');
             this._showRunning(false);
             this._stopPolling();
         } catch (e) {
@@ -367,7 +367,7 @@ const SnifferPage = {
             const iface = document.getElementById('sniff-interface').value;
             const resp = await fetch('/api/mitm/scan', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ interface: iface }),
             });
             const data = await resp.json();
@@ -426,7 +426,7 @@ const SnifferPage = {
         try {
             const resp = await fetch('/api/mitm/start', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ targets }),
             });
             const data = await resp.json();
@@ -436,7 +436,7 @@ const SnifferPage = {
                 return;
             }
 
-            App.toast(`Intercepting ${data.target_count} device(s) — traffic will now flow through your PC`, 'success');
+            App.toast(`Intercepting ${data.target_count} device(s) - traffic will now flow through your PC`, 'success');
             this._showMitmRunning(true);
 
         } catch (e) {
@@ -449,21 +449,23 @@ const SnifferPage = {
         if (btn) { btn.textContent = '⚡ Scanning & Intercepting...'; btn.disabled = true; }
 
         try {
-            const iface = document.getElementById('sniff-interface').value;
+            const ifaceEl = document.getElementById('sniff-interface');
+            const iface = ifaceEl ? ifaceEl.value : "";
             const resp = await fetch('/api/mitm/start-all', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ interface: iface }),
             });
             const data = await resp.json();
 
             if (data.error) {
                 App.toast('Intercept ALL failed: ' + data.error, 'error');
+                if (btn) { btn.textContent = '⚡ Intercept ALL Devices'; btn.disabled = false; }
                 return;
             }
 
             const total = data.total_hosts_found || data.target_count || '?';
-            App.toast(`⚡ Intercepting ALL ${data.target_count} devices (${total} found) — full network visibility active`, 'success');
+            App.toast(`⚡ Intercepting ALL ${data.target_count} devices (${total} found) - full network visibility active`, 'success');
             this._showMitmRunning(true);
 
             // Render intercepted targets in the Active Interception panel
@@ -502,7 +504,7 @@ const SnifferPage = {
             const resp = await fetch('/api/mitm/stop', { method: 'POST' });
             const data = await resp.json();
 
-            App.toast('Interception stopped — ARP tables restored', 'info');
+            App.toast('Interception stopped - ARP tables restored', 'info');
             this._showMitmRunning(false);
             this._lastMitmTargetCount = 0;
 
@@ -529,7 +531,7 @@ const SnifferPage = {
         if (dot && running) dot.style.boxShadow = '0 0 8px var(--red)';
         if (dot && !running) dot.style.boxShadow = 'none';
         if (text) {
-            text.textContent = running ? 'ACTIVE — Intercepting' : 'Inactive';
+            text.textContent = running ? 'ACTIVE - Intercepting' : 'Inactive';
             text.style.color = running ? 'var(--red)' : 'var(--text-muted)';
         }
         if (startBtn) startBtn.style.display = running ? 'none' : 'inline-flex';
@@ -640,7 +642,7 @@ const SnifferPage = {
         // Update status text with target count
         const text = document.getElementById('mitm-status-text');
         if (text && statusData.is_running) {
-            text.textContent = `ACTIVE — Intercepting ${targets.length} device${targets.length !== 1 ? 's' : ''}`;
+            text.textContent = `ACTIVE - Intercepting ${targets.length} device${targets.length !== 1 ? 's' : ''}`;
             text.style.color = 'var(--red)';
         }
     },
@@ -722,7 +724,7 @@ const SnifferPage = {
 
             const hostname = e.hostname
                 ? `<span style="color:var(--green);font-size:0.72rem">${e.hostname}</span>`
-                : `<span style="color:var(--text-muted);font-size:0.72rem;font-style:italic">—</span>`;
+                : `<span style="color:var(--text-muted);font-size:0.72rem;font-style:italic">-</span>`;
 
             const isExpanded = this._expandedIps.has(e.ip);
             const chevron = isExpanded ? '▾' : '▸';
@@ -758,7 +760,7 @@ const SnifferPage = {
                     <td style="padding:6px 8px;font-family:var(--font-mono);color:${ipColor};font-weight:500">${e.ip}</td>
                     <td style="padding:6px 8px">${hostname}</td>
                     <td style="padding:6px 8px;text-align:right;font-family:var(--font-mono);color:var(--text-primary);font-weight:500">${e.data_volume_formatted}</td>
-                    <td style="padding:6px 8px">${sites || '<span style="color:var(--text-muted);font-size:0.7rem">—</span>'}</td>
+                    <td style="padding:6px 8px">${sites || '<span style="color:var(--text-muted);font-size:0.7rem">-</span>'}</td>
                     <td style="padding:6px 8px;text-align:center">${badge}</td>
                 </tr>
                 ${expandRow}
@@ -875,7 +877,7 @@ const SnifferPage = {
             if (!this._knownProtocols.has(proto)) {
                 this._knownProtocols.add(proto);
                 this._visibleProtocols.add(proto);
-                
+
                 const lbl = document.createElement('label');
                 lbl.style.display = 'flex';
                 lbl.style.alignItems = 'center';
@@ -915,15 +917,15 @@ const SnifferPage = {
                     this._visibleIps.add(host);
                 }
                 // If local IP, do NOT add to _visibleIps → filtered out by default
-                
+
                 const div = document.createElement('div');
                 div.style.display = 'flex';
                 div.style.alignItems = 'center';
                 div.style.gap = '6px';
                 div.style.padding = '2px 0';
 
-                const localTag = isLocal 
-                    ? '<span style="color:var(--orange);font-size:0.65rem;font-weight:600;margin-left:4px">(YOU)</span>' 
+                const localTag = isLocal
+                    ? '<span style="color:var(--orange);font-size:0.65rem;font-weight:600;margin-left:4px">(YOU)</span>'
                     : '';
 
                 div.innerHTML = `
@@ -975,7 +977,7 @@ const SnifferPage = {
             if (stats.local_ip && !this._localIp) {
                 this._localIp = stats.local_ip;
                 const label = document.getElementById('sniff-local-ip-label');
-                if (label) label.textContent = `(Your IP: ${this._localIp} — auto-excluded)`;
+                if (label) label.textContent = `(Your IP: ${this._localIp} - auto-excluded)`;
             }
 
             if (!stats.is_running) {
@@ -1006,11 +1008,11 @@ const SnifferPage = {
 
     _updateStats(stats) {
         const el = (id) => document.getElementById(id);
-        if (el('sniff-total'))    el('sniff-total').textContent = stats.total_packets;
-        if (el('sniff-hosts'))    el('sniff-hosts').textContent = stats.unique_hosts_count;
-        if (el('sniff-pps'))      el('sniff-pps').textContent = Math.round(stats.packets_per_second);
+        if (el('sniff-total')) el('sniff-total').textContent = stats.total_packets;
+        if (el('sniff-hosts')) el('sniff-hosts').textContent = stats.unique_hosts_count;
+        if (el('sniff-pps')) el('sniff-pps').textContent = Math.round(stats.packets_per_second);
         if (el('sniff-duration')) el('sniff-duration').textContent = this._formatDuration(stats.duration);
-        if (el('sniff-alerts'))   el('sniff-alerts').textContent = (stats.security_alerts || []).length;
+        if (el('sniff-alerts')) el('sniff-alerts').textContent = (stats.security_alerts || []).length;
         if (el('sniff-dns-count')) el('sniff-dns-count').textContent = (stats.dns_queries || []).length;
     },
 
@@ -1094,9 +1096,9 @@ const SnifferPage = {
                         <span class="mono" style="min-width:120px;color:var(--cyan);font-size:0.78rem">${ip}</span>
                         <div style="display:flex;gap:4px;flex-wrap:wrap">
                             ${svcs.map(s => {
-                                const danger = ['FTP','Telnet','HTTP','SNMP','TFTP'].includes(s);
-                                return `<span class="badge badge-protocol" style="${danger ? 'background:rgba(255,59,92,0.15);color:var(--red)' : ''}">${s}</span>`;
-                            }).join('')}
+                    const danger = ['FTP', 'Telnet', 'HTTP', 'SNMP', 'TFTP'].includes(s);
+                    return `<span class="badge badge-protocol" style="${danger ? 'background:rgba(255,59,92,0.15);color:var(--red)' : ''}">${s}</span>`;
+                }).join('')}
                         </div>
                     </div>
                 `).join('');
@@ -1115,7 +1117,7 @@ const SnifferPage = {
     },
 
     /**
-     * Render per-device activity profiles — the "shock value" panel.
+     * Render per-device activity profiles - the "shock value" panel.
      */
     _renderDeviceProfiles(profiles) {
         const container = document.getElementById('device-profiles-container');
@@ -1138,7 +1140,7 @@ const SnifferPage = {
             const osLabel = p.os ? `<span style="color:var(--purple);font-size:0.7rem;margin-left:6px">${this._escapeHtml(p.os)}</span>` : '';
             const macLabel = p.mac ? `<span style="color:var(--text-muted);font-size:0.68rem;font-family:var(--font-mono);margin-left:6px">${p.mac}</span>` : '';
 
-            // Sites visited — the key shock-value data
+            // Sites visited - the key shock-value data
             const sitesHtml = p.sites_visited.slice(0, 30).map(([domain, count]) => {
                 // Color-code by type
                 let color = 'var(--text-secondary)';
@@ -1153,7 +1155,7 @@ const SnifferPage = {
                 return `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:4px;background:rgba(255,255,255,0.03);border:1px solid var(--border);font-size:0.72rem;color:${color};font-family:var(--font-mono)">${this._escapeHtml(domain)}<span style="color:var(--text-muted);font-size:0.6rem;margin-left:2px">×${count}</span></span>`;
             }).join(' ');
 
-            // HTTP URLs (cleartext — extra shocking)
+            // HTTP URLs (cleartext - extra shocking)
             const urlsHtml = p.http_urls.length > 0
                 ? `<div style="margin-top:6px">
                      <span style="color:var(--red);font-size:0.68rem;font-weight:600">⚠ CLEARTEXT HTTP REQUESTS:</span>
@@ -1171,7 +1173,7 @@ const SnifferPage = {
             // Categories
             let catHtml = '';
             if (p.categories) {
-                const cats = Object.entries(p.categories).sort((a,b) => b[1] - a[1]);
+                const cats = Object.entries(p.categories).sort((a, b) => b[1] - a[1]);
                 if (cats.length > 0) {
                     catHtml = `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">
                         ${cats.map(([c, count]) => `<span class="badge badge-category" style="background:${this._getCategoryColor(c)}20;color:${this._getCategoryColor(c)};border-color:${this._getCategoryColor(c)}40">${c.toUpperCase()} <span style="opacity:0.6;font-size:0.6rem">×${count}</span></span>`).join('')}
@@ -1188,13 +1190,13 @@ const SnifferPage = {
                      <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:4px;font-weight:600">RECENT ACTIVITY TIMELINE:</div>
                      <div style="display:flex;flex-direction:column;gap:2px;max-height:100px;overflow-y:auto;background:var(--bg-deep);padding:6px;border-radius:4px">
                        ${[...p.timeline].reverse().slice(0, 15).map(t => {
-                           const isAdult = t.category === 'adult';
-                           return `<div style="font-family:var(--font-mono);font-size:0.68rem;display:flex;gap:6px;color:${isAdult ? 'var(--red)' : 'var(--text-secondary)'}">
+                    const isAdult = t.category === 'adult';
+                    return `<div style="font-family:var(--font-mono);font-size:0.68rem;display:flex;gap:6px;color:${isAdult ? 'var(--red)' : 'var(--text-secondary)'}">
                              <span style="color:var(--text-muted)">[${this._formatTimestamp(t.timestamp)}]</span>
                              <span style="color:${this._getCategoryColor(t.category)};min-width:30px">[${t.protocol}]</span>
                              <span style="${isAdult ? 'font-weight:600' : ''}">${this._escapeHtml(t.domain)}</span>
                            </div>`;
-                       }).join('')}
+                }).join('')}
                      </div>
                    </div>`
                 : '';
@@ -1313,7 +1315,7 @@ const SnifferPage = {
                 line.dataset.proto = pkt.protocol;
                 line.dataset.src = pkt.src || '';
                 line.dataset.dst = pkt.dst || '';
-                
+
                 const protoVisible = this._visibleProtocols.has(pkt.protocol);
                 const srcVisible = !pkt.src || this._visibleIps.has(pkt.src);
                 const dstVisible = !pkt.dst || this._visibleIps.has(pkt.dst);
@@ -1322,8 +1324,8 @@ const SnifferPage = {
                     line.style.display = 'none';
                 }
 
-                const macInfo = (pkt.src_mac && pkt.src_mac !== pkt.src) 
-                    ? `<span class="console-mac">[${pkt.src_mac}]</span>` 
+                const macInfo = (pkt.src_mac && pkt.src_mac !== pkt.src)
+                    ? `<span class="console-mac">[${pkt.src_mac}]</span>`
                     : '';
 
                 line.innerHTML = `
@@ -1372,7 +1374,7 @@ const SnifferPage = {
             <div class="proto-bar-row">
                 <span class="proto-bar-label">${proto}</span>
                 <div class="proto-bar-track">
-                    <div class="proto-bar-fill" style="width:${(count/maxCount)*100}%;background:${colorMap[proto] || '#5a6378'}"></div>
+                    <div class="proto-bar-fill" style="width:${(count / maxCount) * 100}%;background:${colorMap[proto] || '#5a6378'}"></div>
                 </div>
                 <span class="proto-bar-count">${count}</span>
             </div>
@@ -1381,7 +1383,7 @@ const SnifferPage = {
 
     _protoClass(protocol) {
         const p = protocol.toLowerCase().replace(/[^a-z]/g, '');
-        const known = ['arp','dns','dhcp','http','https','tcp','udp','icmp','ssh','smb','mdns','llmnr','ssdp','netbios','ndp'];
+        const known = ['arp', 'dns', 'dhcp', 'http', 'https', 'tcp', 'udp', 'icmp', 'ssh', 'smb', 'mdns', 'llmnr', 'ssdp', 'netbios', 'ndp'];
         return known.includes(p) ? `proto-${p}` : 'proto-other';
     },
 

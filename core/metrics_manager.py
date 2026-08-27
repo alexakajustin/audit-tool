@@ -50,6 +50,17 @@ class MetricsManager:
                     if hasattr(api, 'inventory') and api.inventory:
                         api.inventory.upsert_device(dev)
                 api.passive_discovery.start(interface=iface, on_device_found=on_found)
+
+            # Auto-start ARP interception (scan network + spoof all devices)
+            if hasattr(api, 'arp_spoofer') and api.arp_spoofer and not api.arp_spoofer.is_running:
+                import threading
+                def _delayed_mitm_start():
+                    import time
+                    time.sleep(2.5)  # Give passive discovery time to finish its initial ARP burst to avoid Scapy srp() socket conflicts
+                    api.arp_spoofer.start_all(interface=iface)
+                    print("[MetricsManager] Auto-started ARP interception")
+                    
+                threading.Thread(target=_delayed_mitm_start, daemon=True).start()
                 
         except Exception as e:
             print(f"[MetricsManager] Warning: failed to auto-start services ({e})")
@@ -595,7 +606,85 @@ class MetricsManager:
             pdf.cell(50, 7, f" {mitm_status.get('packets_sent')} pkts", border="B")
             pdf.cell(45, 7, f" {mitm_status.get('duration', 0):.1f} sec", border="B")
             pdf.cell(50, 7, f" {mitm_status.get('gateway_ip')}", border="B", ln=True)
-            pdf.ln(8)
+            pdf.ln(4)
+
+            # ── List each intercepted target ──
+            if targets:
+                pdf.set_font("helvetica", "B", 10)
+                pdf.set_text_color(*c_dark_navy)
+                pdf.cell(0, 7, "Intercepted Devices", ln=True)
+                pdf.ln(2)
+
+                with pdf.table(borders_layout="HORIZONTAL_LINES", text_align="LEFT") as table:
+                    pdf.set_font("helvetica", "B", 9)
+                    row = table.row()
+                    row.cell("IP Address")
+                    row.cell("MAC Address")
+
+                    pdf.set_font("helvetica", "", 9)
+                    for t in targets:
+                        row = table.row()
+                        row.cell(str(t.get("ip", "")))
+                        row.cell(str(t.get("mac", "")))
+                pdf.ln(4)
+
+            # ── Per-Device Browsing Activity (the shock value) ──
+            device_profiles = raw_stats.get("device_profiles", [])
+            active_profiles = [p for p in device_profiles if p.get("sites_visited") or p.get("dns_count", 0) > 0]
+            if active_profiles:
+                pdf.set_font("helvetica", "B", 10)
+                pdf.set_text_color(*c_dark_navy)
+                pdf.cell(0, 7, "Per-Device Browsing Activity - Who Visited What", ln=True)
+                pdf.set_font("helvetica", "I", 8)
+                pdf.set_text_color(*c_muted)
+                pdf.cell(0, 5, "Sites visited by each device on the network during the gathering window.", ln=True)
+                pdf.ln(3)
+
+                for prof in active_profiles[:15]:
+                    ip = prof.get("ip", "?")
+                    hostname = prof.get("hostname", "")
+                    mac = prof.get("mac", "")
+                    intercepted = prof.get("intercepted", False)
+                    sites = prof.get("sites_visited", [])
+                    dns_count = prof.get("dns_count", 0)
+                    sni_count = prof.get("sni_count", 0)
+                    vol = prof.get("data_volume", 0)
+
+                    # Device header
+                    tag = " [INTERCEPTED]" if intercepted else " [PASSIVE]"
+                    label = f"{ip}"
+                    if hostname:
+                        label += f" ({hostname})"
+                    if mac:
+                        label += f"  -  {mac}"
+                    label += tag
+
+                    pdf.set_font("helvetica", "B", 9)
+                    pdf.set_text_color(*c_dark_navy)
+                    pdf.cell(0, 6, label, ln=True)
+
+                    # Stats line
+                    pdf.set_font("helvetica", "", 8)
+                    pdf.set_text_color(*c_muted)
+                    stats_line = f"DNS: {dns_count} queries  |  HTTPS/SNI: {sni_count}  |  Volume: {self._format_bytes(vol)}"
+                    pdf.cell(0, 5, stats_line, ln=True)
+
+                    # Top sites table
+                    if sites:
+                        with pdf.table(borders_layout="HORIZONTAL_LINES", text_align="LEFT") as table:
+                            pdf.set_font("helvetica", "B", 8)
+                            row = table.row()
+                            row.cell("Domain / Website")
+                            row.cell("Hits")
+
+                            pdf.set_font("helvetica", "", 8)
+                            for domain, count in sites[:10]:
+                                row = table.row()
+                                row.cell(str(domain))
+                                row.cell(str(count))
+                    pdf.ln(4)
+
+            pdf.ln(4)
 
         # ── Detailed Security Findings ──
         pdf.set_font("helvetica", "B", 12)

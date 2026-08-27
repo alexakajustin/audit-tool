@@ -1,5 +1,5 @@
 """
-MITM / ARP Spoofing API routes — scan network, start/stop interception.
+MITM / ARP Spoofing API routes - scan network, start/stop interception.
 """
 
 from flask import Blueprint, jsonify, request
@@ -24,7 +24,7 @@ def mitm_scan():
     """
     ARP scan the local subnet to discover all live devices.
     Body JSON (optional):
-        interface: str — network interface to scan from
+        interface: str - network interface to scan from
     """
     if not api.arp_spoofer:
         return jsonify({"error": "ARP Spoofer not available"}), 503
@@ -47,8 +47,8 @@ def mitm_start():
     """
     Start ARP spoofing against specified targets.
     Body JSON:
-        targets: list[str] — IP addresses to intercept
-        gateway_ip: str (optional) — override auto-detected gateway
+        targets: list[str] - IP addresses to intercept
+        gateway_ip: str (optional) - override auto-detected gateway
     """
     if not api.arp_spoofer:
         return jsonify({"error": "ARP Spoofer not available"}), 503
@@ -84,7 +84,7 @@ def mitm_start_all():
     One-click intercept ALL devices on the subnet.
     Scans, selects all non-gateway hosts, starts spoofing + sniffer.
     Body JSON (optional):
-        interface: str — network interface
+        interface: str - network interface
     """
     if not api.arp_spoofer:
         return jsonify({"error": "ARP Spoofer not available"}), 503

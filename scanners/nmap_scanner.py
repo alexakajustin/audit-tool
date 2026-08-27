@@ -1,5 +1,5 @@
 """
-Nmap Scanner — L3 discovery with port scanning, OS and service detection.
+Nmap Scanner - L3 discovery with port scanning, OS and service detection.
 
 Uses python-nmap as a wrapper around the Nmap binary.
 Handles both known networks and stealth discovery of non-responsive hosts.
@@ -108,14 +108,14 @@ class NmapScanner(BaseScanner):
             scan_type: "discovery" | "ports" | "full" (default: "discovery")
             top_ports: int (default: 100)
             os_detection: bool (default: False)
-            skip_ping: bool (default: False) — for hosts that don't respond to ping
+            skip_ping: bool (default: False) - for hosts that don't respond to ping
             service_detection: bool (default: False)
         """
         opts = target.options
         scan_type = opts.get("scan_type", "discovery")
 
         if scan_type == "discovery":
-            # Host discovery only — fast
+            # Host discovery only - fast
             args = "-sn"
         elif scan_type == "ports":
             # Port scan with top N ports

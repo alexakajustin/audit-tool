@@ -1,5 +1,5 @@
 """
-Inventory API routes — device CRUD and export.
+Inventory API routes - device CRUD and export.
 """
 
 from flask import Blueprint, Response, jsonify, request
@@ -15,10 +15,10 @@ def list_devices():
     List all inventoried devices.
 
     Query params:
-        search: str — filter by IP, MAC, vendor, hostname, OS
-        status: str — filter by status (online/offline/unknown)
-        sort_by: str — field to sort by (default: last_seen)
-        sort_order: str — asc or desc (default: desc)
+        search: str - filter by IP, MAC, vendor, hostname, OS
+        status: str - filter by status (online/offline/unknown)
+        sort_by: str - field to sort by (default: last_seen)
+        sort_order: str - asc or desc (default: desc)
     """
     devices = api.inventory.get_all(
         search=request.args.get("search", ""),

@@ -1,12 +1,12 @@
 """
-VLAN Discovery Engine — discovers VLANs, subnets, switches, and routing
+VLAN Discovery Engine - discovers VLANs, subnets, switches, and routing
 topology using both passive protocol sniffing AND active non-admin probing.
 
 Passive (requires admin): CDP, LLDP, 802.1Q, OSPF, EIGRP, RIP, STP, HSRP/VRRP.
 Active  (NO admin needed): SNMP queries, gateway sweep, cross-VLAN reachability,
                            router fingerprinting, ARP gateway MAC analysis.
 
-The active probes are the primary discovery method — they work without
+The active probes are the primary discovery method - they work without
 admin rights and can discover remote VLANs beyond the local subnet.
 """
 
@@ -91,13 +91,13 @@ class VLANDiscovery:
         )
         self._thread.start()
 
-        # Thread 2: OS-level discovery (route table, ARP, traceroute — no admin)
+        # Thread 2: OS-level discovery (route table, ARP, traceroute - no admin)
         threading.Thread(
             target=self._run_traceroute_discovery,
             daemon=True,
         ).start()
 
-        # Thread 3: Active probes (SNMP, gateway sweep, cross-VLAN — no admin)
+        # Thread 3: Active probes (SNMP, gateway sweep, cross-VLAN - no admin)
         self._probe_thread = threading.Thread(
             target=self._run_active_probes,
             daemon=True,
@@ -330,7 +330,7 @@ class VLANDiscovery:
 
     def _run_active_probes(self) -> None:
         """
-        Continuous active probing thread — runs discovery once, then enters
+        Continuous active probing thread - runs discovery once, then enters
         a tight sweep loop that re-scans discovered VLAN subnets every 5s.
         Acts like a persistent sniffer for cross-VLAN traffic.
         """
@@ -546,7 +546,7 @@ class VLANDiscovery:
                     source_protocol="snmp",
                     capabilities=["Router"],
                 )
-                print(f"[VLANDiscovery] SNMP: Device '{device_id}' — {str(platform)[:80]}")
+                print(f"[VLANDiscovery] SNMP: Device '{device_id}' - {str(platform)[:80]}")
 
         except Exception as e:
             print(f"[VLANDiscovery] SNMP system info error: {e}")
@@ -602,10 +602,10 @@ class VLANDiscovery:
                         source_switch=str(sys_info.get("sys_name", ip)) if sys_info else ip,
                     )
 
-                    print(f"[VLANDiscovery] SNMP: VLAN {vlan_id} — '{name}', IP: {iface_ip}/{iface_mask}")
+                    print(f"[VLANDiscovery] SNMP: VLAN {vlan_id} - '{name}', IP: {iface_ip}/{iface_mask}")
 
                 elif iface_ip and iface_mask and not iface_ip.startswith("127."):
-                    # Non-VLAN interface with IP — still register the subnet
+                    # Non-VLAN interface with IP - still register the subnet
                     try:
                         net = ipaddress.IPv4Network(f"{iface_ip}/{iface_mask}", strict=False)
                         self._register_subnet(
@@ -697,7 +697,7 @@ class VLANDiscovery:
     def _probe_gateway_sweep(self) -> None:
         """
         TCP connect scan to common gateway addresses (.1) across private subnets.
-        Finds reachable gateways on remote VLANs — proves inter-VLAN routing exists.
+        Finds reachable gateways on remote VLANs - proves inter-VLAN routing exists.
         No admin rights needed (uses standard TCP sockets).
         """
         print("[VLANDiscovery] Starting gateway subnet sweep...")
@@ -706,7 +706,7 @@ class VLANDiscovery:
         # Build target list: 192.168.X.1 for X=1-254, 10.0.X.1 for common, 172.16-31.X.1
         targets = []
 
-        # 192.168.X.1 — most common for small/medium VLAN setups
+        # 192.168.X.1 - most common for small/medium VLAN setups
         for x in range(1, 255):
             targets.append(f"192.168.{x}.1")
 
@@ -874,7 +874,7 @@ class VLANDiscovery:
                             f"This means inter-VLAN traffic is not filtered by access control lists. "
                             f"Any device on your VLAN can communicate with devices on {cidr}."
                 )
-                print(f"[VLANDiscovery] CROSS-VLAN: {gw_ip} ({cidr}) is REACHABLE from {local_subnet} — NO ACL!")
+                print(f"[VLANDiscovery] CROSS-VLAN: {gw_ip} ({cidr}) is REACHABLE from {local_subnet} - NO ACL!")
 
     # ── Router Fingerprinting ────────────────────────────────────
 
@@ -971,7 +971,7 @@ class VLANDiscovery:
                                 f"or filtered by ACLs."
                     )
 
-                print(f"[VLANDiscovery] FINGERPRINT: {gw_ip} — {detected_vendor or 'Unknown'}, "
+                print(f"[VLANDiscovery] FINGERPRINT: {gw_ip} - {detected_vendor or 'Unknown'}, "
                       f"Ports: {port_list}")
 
     # ── ARP Gateway MAC Analysis ─────────────────────────────────
@@ -1024,7 +1024,7 @@ class VLANDiscovery:
                         continue
 
                 if len(subnets) > 1:
-                    # Same MAC, different subnets — this is a router doing inter-VLAN routing
+                    # Same MAC, different subnets - this is a router doing inter-VLAN routing
                     subnet_list = ", ".join(sorted(subnets))
                     self._add_finding(
                         severity="info",
@@ -1043,7 +1043,7 @@ class VLANDiscovery:
     def run_manual_probe(self) -> dict:
         """Trigger active probes or an immediate sweep if already running."""
         if self._probe_status == "running":
-            # Already in continuous mode — trigger an immediate host sweep
+            # Already in continuous mode - trigger an immediate host sweep
             threading.Thread(
                 target=self._probe_remote_subnet_hosts,
                 daemon=True,
@@ -1168,7 +1168,7 @@ class VLANDiscovery:
         except Exception:
             pass
 
-        # Collect remote subnets to sweep — ONLY those confirmed reachable
+        # Collect remote subnets to sweep - ONLY those confirmed reachable
         remote_subnets = []
         with self._lock:
             for subnet_info in self._subnets.values():
@@ -1184,8 +1184,8 @@ class VLANDiscovery:
                     if local_subnet and net == local_subnet:
                         continue
                     # ONLY sweep subnets where we confirmed the gateway is actually
-                    # reachable — gateway_sweep and snmp both verify connectivity.
-                    # DO NOT sweep traceroute subnets — those are ISP transit hops
+                    # reachable - gateway_sweep and snmp both verify connectivity.
+                    # DO NOT sweep traceroute subnets - those are ISP transit hops
                     # that will waste minutes timing out on 254 unreachable hosts.
                     src = subnet_info.source_protocol or ""
                     if any(kw in src for kw in ("snmp", "gateway_sweep")):
@@ -1418,7 +1418,7 @@ class VLANDiscovery:
     # ── Capture Loop ─────────────────────────────────────────────
 
     def _capture_loop(self, interface: str) -> None:
-        """Background thread — sniffs infrastructure protocols."""
+        """Background thread - sniffs infrastructure protocols."""
         try:
             from scapy.all import sniff, conf, load_contrib
 

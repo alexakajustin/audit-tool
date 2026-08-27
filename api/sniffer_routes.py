@@ -1,5 +1,5 @@
 """
-Sniffer API routes — start/stop capture, stats, PCAP import/export.
+Sniffer API routes - start/stop capture, stats, PCAP import/export.
 """
 
 import os
@@ -20,8 +20,8 @@ def start_sniffer():
     Start the passive sniffer.
 
     Body JSON:
-        interface: str (optional) — network interface
-        filter: str (optional) — BPF filter expression
+        interface: str (optional) - network interface
+        filter: str (optional) - BPF filter expression
     """
     if api.sniffer.is_running:
         return jsonify({"error": "Sniffer is already running"}), 409

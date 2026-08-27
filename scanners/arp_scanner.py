@@ -1,5 +1,5 @@
 """
-ARP Sweep Scanner — active L2 discovery via Scapy.
+ARP Sweep Scanner - active L2 discovery via Scapy.
 
 Sends ARP who-has requests to every IP in the subnet.
 Works with or without DHCP. Requires admin privileges.
@@ -23,7 +23,7 @@ from network.mac_lookup import lookup_vendor
 
 
 class ArpScanner(BaseScanner):
-    """Active ARP sweep — discovers all L2 devices in a subnet."""
+    """Active ARP sweep - discovers all L2 devices in a subnet."""
 
     @property
     def name(self) -> str:
