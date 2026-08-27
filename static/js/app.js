@@ -6,7 +6,6 @@ const App = {
     _currentPage: null,
     _pages: {
         dashboard: DashboardPage,
-        discovery: DiscoveryPage,
         inventory: InventoryPage,
         sniffer: SnifferPage,
         vlans: VLANsPage,

@@ -128,7 +128,20 @@ class PortScanner(BaseScanner):
         scan_profile = opts.get("scan_type", "fast")
 
         # Determine ports to scan
-        if scan_profile == "full":
+        custom_ports_str = opts.get("custom_ports", "")
+        custom_ports = []
+        if custom_ports_str:
+            try:
+                for p in custom_ports_str.split(","):
+                    p_int = int(p.strip())
+                    if 1 <= p_int <= 65535:
+                        custom_ports.append(p_int)
+            except Exception:
+                pass
+
+        if custom_ports:
+            ports_to_scan = sorted(list(set(custom_ports)))
+        elif scan_profile == "full":
             ports_to_scan = sorted(list(COMMON_PORTS.keys()))
         elif scan_profile in ("ports", "top100"):
             ports_to_scan = sorted(list(COMMON_PORTS.keys()))

@@ -143,7 +143,7 @@ def scan_device_ports():
 
     target = ScanTarget(
         subnet=" ".join(target_ips),
-        options={"scan_type": profile},
+        options={"scan_type": profile, "custom_ports": data.get("ports", "")},
     )
 
     result = scanner.scan(target)
